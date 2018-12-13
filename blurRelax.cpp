@@ -295,6 +295,7 @@ class BlurRelax : public MPxDeformerNode {
 			const UINT iterations,
 			const UINT numVerts,
 			const std::vector<bool> &group,
+			const std::vector<size_t> &order,
 			const std::vector<std::vector<size_t>> &neighbors,
 			const std::vector<std::vector<bool>> &hardEdges,
 			const std::vector<float> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
@@ -519,7 +520,7 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 			}
 
 			quickRelax(mesh, bb, hb, reproject, pge,
-				iterations, numVerts, group, neighbors, hardEdges, shiftVal,
+				iterations, numVerts, group, order, neighbors, hardEdges, shiftVal,
 				shiftComp, valence, pinPoints, creaseCount, verts, baseVerts);
 
 			// undo ordering
@@ -752,6 +753,7 @@ void BlurRelax::quickRelax(
 	const UINT iterations,
 	const UINT numVerts,
 	const std::vector<bool> &group,
+	const std::vector<size_t> &order,
 	const std::vector<std::vector<size_t>> &neighbors,
 	const std::vector<std::vector<bool>> &hardEdges,
 	const std::vector<float> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
@@ -795,7 +797,7 @@ void BlurRelax::quickRelax(
 		if (reproject) {
 			#pragma omp parallel for if(numVerts>2000)
 			for (int i = 0; i < nonzeroValence; ++i) {
-				if (creaseCount[i] == 0) {
+				if ((creaseCount[i] == 0) && (group[order[i]])) {
 					MFloatPoint mf(verts[i][0], verts[i][1], verts[i][2]);
 					MPointOnMesh pom;
 					octree.getClosestPoint(mf, pom);
