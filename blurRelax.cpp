@@ -67,6 +67,8 @@ SOFTWARE.
 #define HB_PIN    1
 #define HB_SLIDE  2
 
+#define DEFORMER_NAME "BlurRelax"
+
 void edgeProject(
 	const float basePoints[][4],
 	const std::vector<size_t> &group,
@@ -343,10 +345,9 @@ MStatus BlurRelax::getTrueWeights(MObject &mesh, MDataBlock &dataBlock, UINT ind
 	MArrayDataHandle weightList = dataBlock.outputArrayValue(MPxDeformerNode::weightList, &status);
 	if (!status) return status; // we should always be able to get a weightList
 	status = weightList.jumpToElement(index);
-	// it is possible that the jumpToElement fails.  In that case all weights are 1.
+	// it is possible that the jumpToElement fails. In that case use the envelope value
 	if (!status) {
-		for (unsigned int i = 0; i < meshFn.numVertices(); i++)
-			weightVals.push_back(envelope);
+		weightVals.resize(numVerts, envelope);
 	}
 	else {
 		MDataHandle hWeightsStructure = weightList.inputValue(&status);
@@ -363,7 +364,7 @@ MStatus BlurRelax::getTrueWeights(MObject &mesh, MDataBlock &dataBlock, UINT ind
 		for (unsigned int i = 0; i < numWeights; i++, hWeights.next()) {
 			unsigned int weightsElementIndex = hWeights.elementIndex(&status);
 			while (weightIndex < weightsElementIndex) {
-				weightVals.push_back(0.0f); // weights could be sparse, fill in zero weight if no data
+				weightVals.push_back(envelope); // weights could be sparse, fill in default weight if no data
 				weightIndex++;
 			}
 			MDataHandle value = hWeights.inputValue(&status);
@@ -371,11 +372,8 @@ MStatus BlurRelax::getTrueWeights(MObject &mesh, MDataBlock &dataBlock, UINT ind
 			weightIndex++;
 		}
 		// now we have written the last non-zero weight into weightVals, but the last non-zero weight
-		// doesn't have to be for the last vertex in the buffer.  Add more zero values if necessary.
-		while (weightIndex < numVerts) {
-			weightVals.push_back(0.0f); // weights could be sparse, fill in zero weight if no data
-			weightIndex++;
-		}
+		// doesn't have to be for the last vertex in the buffer. Add more default values if necessary.
+		weightVals.resize(numVerts, envelope);
 	}
 	return MStatus::kSuccess;
 }
@@ -441,6 +439,8 @@ MStatus BlurRelax::initialize() {
 	CHECKSTAT("aIterations");
 	status = attributeAffects(aIterations, outputGeom);
 	CHECKSTAT("aIterations");
+
+	MGlobal::executeCommand("makePaintable -attrType \"multiFloat\" -sm \"deformer\" \"" DEFORMER_NAME "\" \"weights\";");
 
 	return MStatus::kSuccess;
 }
@@ -554,7 +554,7 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 MStatus initializePlugin(MObject obj) {
 	MStatus result;
 	MFnPlugin plugin(obj, "Blur Studio", "1.0", "Any");
-	result = plugin.registerNode("BlurRelax", BlurRelax::id, BlurRelax::creator, BlurRelax::initialize, MPxNode::kDeformerNode);
+	result = plugin.registerNode(DEFORMER_NAME, BlurRelax::id, BlurRelax::creator, BlurRelax::initialize, MPxNode::kDeformerNode);
 
 	return result;
 }
