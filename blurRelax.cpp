@@ -67,6 +67,10 @@ SOFTWARE.
 #define HB_PIN    1
 #define HB_SLIDE  2
 
+#define GB_NONE   0
+#define GB_PIN    1
+#define GB_SLIDE  2
+
 #define DEFORMER_NAME "BlurRelax"
 
 void edgeProject(
@@ -255,7 +259,7 @@ class BlurRelax : public MPxDeformerNode {
 		static MObject aIterations;
 		static MObject aBorderBehavior;
 		static MObject aHardEdgeBehavior;
-		static MObject aPinGroupEdges;
+		static MObject aGroupEdgeBehavior;
 		static MObject aReproject;
 
 		static MTypeId id;
@@ -274,8 +278,8 @@ class BlurRelax : public MPxDeformerNode {
 			UINT groupId,
 			short borderBehavior,
 			short hardEdgeBehavior,
+			short groupEdgeBehavior,
 			bool reproject,
-			bool pinGroupEdges,
 			std::vector<bool> &group,
 			std::vector<size_t> &invOrder,
 			std::vector<size_t> &order,
@@ -293,8 +297,8 @@ class BlurRelax : public MPxDeformerNode {
 			const MObject &mesh,
 			const short borderBehavior,
 			const short hardEdgeBehavior,
+			const short groupEdgeBehavior,
 			const bool reproject,
-			const bool pinGroupEdges,
 			const UINT iterations,
 			const UINT numVerts,
 			const std::vector<bool> &group,
@@ -318,7 +322,7 @@ MTypeId BlurRelax::id(0x001226FD);
 MObject BlurRelax::aIterations;
 MObject BlurRelax::aBorderBehavior;
 MObject BlurRelax::aHardEdgeBehavior;
-MObject BlurRelax::aPinGroupEdges;
+MObject BlurRelax::aGroupEdgeBehavior;
 MObject BlurRelax::aReproject;
 
 BlurRelax::BlurRelax() {}
@@ -413,14 +417,20 @@ MStatus BlurRelax::initialize() {
 	status = attributeAffects(aHardEdgeBehavior, outputGeom);
 	CHECKSTAT("aHardEdgeBehavior");
 
-	aPinGroupEdges = nAttr.create("pinGroupEdges", "pge", MFnNumericData::kBoolean, true, &status);
-	CHECKSTAT("aPinGroupEdges");
-	nAttr.setKeyable(false);
-	nAttr.setChannelBox(true);
-	status = addAttribute(aPinGroupEdges);
-	CHECKSTAT("aPinGroupEdges");
-	status = attributeAffects(aPinGroupEdges, outputGeom);
-	CHECKSTAT("aPinGroupEdges");
+	aGroupEdgeBehavior = eAttr.create("groupEdgeBehavior", "gb", GB_PIN, &status);
+	CHECKSTAT("aGroupEdgeBehavior");
+	eAttr.setKeyable(false);
+	eAttr.setChannelBox(true);
+	status = eAttr.addField("None", GB_NONE);
+	CHECKSTAT("aGroupEdgeBehavior");
+	status = eAttr.addField("Pin", GB_PIN);
+	CHECKSTAT("aGroupEdgeBehavior");
+	status = eAttr.addField("Slide", GB_SLIDE);
+	CHECKSTAT("aGroupEdgeBehavior");
+	status = addAttribute(aGroupEdgeBehavior);
+	CHECKSTAT("aGroupEdgeBehavior");
+	status = attributeAffects(aGroupEdgeBehavior, outputGeom);
+	CHECKSTAT("aGroupEdgeBehavior");
 
 	aReproject = nAttr.create("reproject", "rp", MFnNumericData::kBoolean, false, &status);
 	CHECKSTAT("aReproject");
@@ -453,8 +463,8 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 		short bb = hBorder.asShort();
 		MDataHandle hHardEdge = dataBlock.inputValue(aHardEdgeBehavior);
 		short hb = hHardEdge.asShort();
-		MDataHandle hPGE = dataBlock.inputValue(aPinGroupEdges);
-		bool pge = hPGE.asBool();
+		MDataHandle hGroupEdge = dataBlock.inputValue(aGroupEdgeBehavior);
+		short gb = hGroupEdge.asShort();
 		MDataHandle hReproject = dataBlock.inputValue(aReproject);
 		bool reproject = hReproject.asBool();
 		MDataHandle hIter = dataBlock.inputValue(aIterations);
@@ -514,7 +524,7 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 			std::vector<bool> pinPoints;
 			std::vector<UINT> creaseCount;
 
-			buildQuickData(hOutput, groupId, bb, hb, reproject, pge,
+			buildQuickData(hOutput, groupId, bb, hb, gb, reproject,
 				group, order, invOrder, neighbors, hardEdges, shiftVal, shiftComp, valence,
 				pinPoints, creaseCount, verts);
 
@@ -522,7 +532,7 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 				for (size_t x = 0; x < 3; ++x) baseVerts[i][x] = verts[i][x];
 			}
 
-			quickRelax(mesh, bb, hb, reproject, pge,
+			quickRelax(mesh, bb, hb, gb, reproject,
 				iterations, numVerts, group, order, invOrder, neighbors, hardEdges, shiftVal,
 				shiftComp, valence, pinPoints, creaseCount, verts, baseVerts);
 
@@ -571,8 +581,8 @@ void BlurRelax::buildQuickData(
 	UINT groupId,
 	short borderBehavior,
 	short hardEdgeBehavior,
+	short groupEdgeBehavior,
 	bool reproject,
-	bool pinGroupEdges,
 	std::vector<bool> &group,
 	std::vector<size_t> &order,
 	std::vector<size_t> &invOrder,
@@ -605,6 +615,10 @@ void BlurRelax::buildQuickData(
 	rawCreaseCount.resize(numVertices);
 	rawPinPoints.resize(numVertices);
 
+	std::vector<UINT> groupBorders;
+	std::vector<bool> isGroupBorder;
+	isGroupBorder.resize(numVertices);
+
 	std::vector<std::vector<UINT>> rawNeighbors;
 	std::vector<std::vector<bool>> rawHardEdges;
 	std::vector<std::vector<bool>> rawPinBorders;
@@ -633,35 +647,57 @@ void BlurRelax::buildQuickData(
 		// hard and unpinned means pin otherwise
 		// TODO: Also handle *IGNORED* neighbors
 		const bool hard = (edgeIter.onBoundary() && borderBehavior) || (!edgeIter.isSmooth() && !edgeIter.onBoundary() && hardEdgeBehavior);
-		const bool pin = (borderBehavior == BB_PIN && edgeIter.onBoundary()) ||
-			(hardEdgeBehavior == HB_PIN && !edgeIter.isSmooth() && !edgeIter.onBoundary());
+		const bool pin = ((borderBehavior == BB_PIN) && edgeIter.onBoundary()) ||
+			((hardEdgeBehavior == HB_PIN) && !edgeIter.isSmooth() && !edgeIter.onBoundary());
 
 		const bool startInGroup = group[start];
 		const bool endInGroup = group[end];
 		if (!startInGroup && !endInGroup) continue;
 
 		if (startInGroup && endInGroup) {
-			rawNeighbors[start].push_back(end);
-			rawHardEdges[start].push_back(hard);
-			rawNeighbors[end].push_back(start);
-			rawHardEdges[end].push_back(hard);
-			if (hard) {
-				++rawCreaseCount[start];
-				++rawCreaseCount[end];
-			}
 			if (pin) {
 				rawPinPoints[start] = true;
 				rawPinPoints[end] = true;
 			}
-		}
-		else if (!startInGroup) {
-			if (pinGroupEdges){
-				rawPinPoints[end] = true;
+			else {
+				rawNeighbors[start].push_back(end);
+				rawHardEdges[start].push_back(hard);
+				rawNeighbors[end].push_back(start);
+				rawHardEdges[end].push_back(hard);
+				if (hard) {
+					++rawCreaseCount[start];
+					++rawCreaseCount[end];
+				}
 			}
 		}
+		else if (!startInGroup) {
+			groupBorders.push_back(end);
+			isGroupBorder[end] = true;
+		}
 		else if (!endInGroup) {
-			if (pinGroupEdges){
-				rawPinPoints[start] = true;
+			groupBorders.push_back(start);
+			isGroupBorder[start] = true;
+		}
+	}
+
+	const bool gbHard = groupEdgeBehavior;
+	const bool gbPin = groupEdgeBehavior == GB_PIN;
+	for (UINT gb: groupBorders){
+		const auto nnn = rawNeighbors[gb];
+		for (size_t i = 0; i < nnn.size(); ++i) {
+			const UINT n = nnn[i];
+			if (isGroupBorder[n]  ){
+				rawHardEdges[gb][i] = rawHardEdges[gb][i] || gbHard;
+				if (gbPin){
+					rawPinPoints[gb] = true;
+					rawPinPoints[n] = true;
+				}
+				else if (gbHard && (gb > n)){
+					// Each edge this way is visited twice
+					// So check (gb>n) to only increment once
+					++rawCreaseCount[gb];
+					++rawCreaseCount[n];
+				}
 			}
 		}
 	}
@@ -743,8 +779,8 @@ void BlurRelax::quickRelax(
 	const MObject &mesh,
 	const short borderBehavior,
 	const short hardEdgeBehavior,
+	const short groupEdgeBehavior,
 	const bool reproject,
-	const bool pinGroupEdges,
 	const UINT iterations,
 	const UINT numVerts,
 	const std::vector<bool> &group,
@@ -765,7 +801,7 @@ void BlurRelax::quickRelax(
 	for (size_t i = 0; i < group.size(); ++i) {
 		if (group[i]) groupIdxs.push_back(i);
 	}
-	bool rpEdges = (borderBehavior == BB_SLIDE) || (hardEdgeBehavior == HB_SLIDE);
+	bool rpEdges = (borderBehavior == BB_SLIDE) || (hardEdgeBehavior == HB_SLIDE) || (groupEdgeBehavior == GB_SLIDE);
 
 	size_t nonzeroValence = neighbors[0].size();
 
