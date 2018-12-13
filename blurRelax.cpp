@@ -70,6 +70,7 @@ SOFTWARE.
 void edgeProject(
 	const float basePoints[][4],
 	const std::vector<size_t> &group,
+	const std::vector<size_t> &invOrder,
 	const std::vector<std::vector<size_t>> &neighbors,
 	const std::vector<std::vector<bool>> &hardEdges,
 	const std::vector<UINT> &creaseCount,
@@ -84,13 +85,12 @@ void edgeProject(
 	*/
 
 	std::vector<UINT> neigh;
-
 	for (size_t gidx = 0; gidx < group.size(); ++gidx) {
 		// If we have "hard edges" we have already removed
 		// any soft edges, so if the crease count for this vertex is zero
 		// we can just completely skip it. And if it's >0, then we can
 		// assume that all stored neighbors are hard.
-		size_t idx = group[gidx];
+		size_t idx = invOrder[group[gidx]];
 
 		float *avg = smoothPoints[idx];
 		const float *basePos = basePoints[idx];
@@ -275,6 +275,7 @@ class BlurRelax : public MPxDeformerNode {
 			bool reproject,
 			bool pinGroupEdges,
 			std::vector<bool> &group,
+			std::vector<size_t> &invOrder,
 			std::vector<size_t> &order,
 			std::vector<std::vector<size_t>> &neighbors,
 			std::vector<std::vector<bool>> &hardEdges,
@@ -295,6 +296,8 @@ class BlurRelax : public MPxDeformerNode {
 			const UINT iterations,
 			const UINT numVerts,
 			const std::vector<bool> &group,
+			const std::vector<size_t> &order,
+			const std::vector<size_t> &invOrder,
 			const std::vector<std::vector<size_t>> &neighbors,
 			const std::vector<std::vector<bool>> &hardEdges,
 			const std::vector<float> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
@@ -421,7 +424,7 @@ MStatus BlurRelax::initialize() {
 	status = attributeAffects(aPinGroupEdges, outputGeom);
 	CHECKSTAT("aPinGroupEdges");
 
-	aReproject = nAttr.create("reproject", "rp", MFnNumericData::kBoolean, true, &status);
+	aReproject = nAttr.create("reproject", "rp", MFnNumericData::kBoolean, false, &status);
 	CHECKSTAT("aReproject");
 	nAttr.setKeyable(false);
 	nAttr.setChannelBox(true);
@@ -502,6 +505,7 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 
 			std::vector<bool> group;
 			std::vector<size_t> order;
+			std::vector<size_t> invOrder;
 			std::vector<std::vector<size_t>> neighbors;
 			std::vector<std::vector<bool>> hardEdges;
 			std::vector<float> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
@@ -511,7 +515,7 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 			std::vector<UINT> creaseCount;
 
 			buildQuickData(hOutput, groupId, bb, hb, reproject, pge,
-				group, order, neighbors, hardEdges, shiftVal, shiftComp, valence,
+				group, order, invOrder, neighbors, hardEdges, shiftVal, shiftComp, valence,
 				pinPoints, creaseCount, verts);
 
 			for (size_t i = 0; i < numVerts; ++i) {
@@ -519,7 +523,7 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 			}
 
 			quickRelax(mesh, bb, hb, reproject, pge,
-				iterations, numVerts, group, neighbors, hardEdges, shiftVal,
+				iterations, numVerts, group, order, invOrder, neighbors, hardEdges, shiftVal,
 				shiftComp, valence, pinPoints, creaseCount, verts, baseVerts);
 
 			// undo ordering
@@ -571,6 +575,7 @@ void BlurRelax::buildQuickData(
 	bool pinGroupEdges,
 	std::vector<bool> &group,
 	std::vector<size_t> &order,
+	std::vector<size_t> &invOrder,
 	std::vector<std::vector<size_t>> &neighbors,
 	std::vector<std::vector<bool>> &hardEdges,
 	std::vector<float> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
@@ -650,24 +655,14 @@ void BlurRelax::buildQuickData(
 			}
 		}
 		else if (!startInGroup) {
-			rawNeighbors[end].push_back(start);
-			rawHardEdges[end].push_back(hard);
-			if (hard) {
-				++rawCreaseCount[start];
-				++rawCreaseCount[end];
+			if (pinGroupEdges){
+				rawPinPoints[end] = true;
 			}
-			if (pinGroupEdges)
-				rawPinPoints[start] = true;
 		}
 		else if (!endInGroup) {
-			rawNeighbors[start].push_back(end);
-			rawHardEdges[start].push_back(hard);
-			if (hard) {
-				++rawCreaseCount[end];
-				++rawCreaseCount[start];
+			if (pinGroupEdges){
+				rawPinPoints[start] = true;
 			}
-			if (pinGroupEdges)
-				rawPinPoints[end] = true;
 		}
 	}
 
@@ -683,8 +678,9 @@ void BlurRelax::buildQuickData(
 	std::fill(rawShiftComp.begin(), rawShiftComp.end(), 0.5f);
 
 	for (size_t i = 0; i < rawNeighbors.size(); ++i) {
-		if (rawCreaseCount[i] != 0) {
-			if (rawCreaseCount[i] != 2) rawPinPoints[i] = true;
+		if ((rawCreaseCount[i] != 0) || rawPinPoints[i]) {
+			if (rawCreaseCount[i] != 2)
+				rawPinPoints[i] = true;
 
 			std::vector<UINT> newNeigh;
 			std::vector<bool> newHard;
@@ -719,7 +715,7 @@ void BlurRelax::buildQuickData(
 	shiftVal.resize(numVertices);
 	shiftComp.resize(numVertices);
 
-	std::vector<size_t> invOrder(order.size());
+	invOrder.resize(order.size());
 	for (size_t i = 0; i < order.size(); ++i) {
 		invOrder[order[i]] = i;
 	}
@@ -752,6 +748,8 @@ void BlurRelax::quickRelax(
 	const UINT iterations,
 	const UINT numVerts,
 	const std::vector<bool> &group,
+	const std::vector<size_t> &order,
+	const std::vector<size_t> &invOrder,
 	const std::vector<std::vector<size_t>> &neighbors,
 	const std::vector<std::vector<bool>> &hardEdges,
 	const std::vector<float> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
@@ -790,12 +788,12 @@ void BlurRelax::quickRelax(
 	for (size_t r = 0; r < iterations; ++r) {
 		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, shiftComp, pinPoints);
 		if (rpEdges) {
-			edgeProject(baseVerts, groupIdxs, neighbors, hardEdges, creaseCount, verts);
+			edgeProject(baseVerts, groupIdxs, invOrder, neighbors, hardEdges, creaseCount, verts);
 		}
 		if (reproject) {
 			#pragma omp parallel for if(numVerts>2000)
 			for (int i = 0; i < nonzeroValence; ++i) {
-				if (creaseCount[i] == 0) {
+				if ((creaseCount[i] == 0) && (group[order[i]])) {
 					MFloatPoint mf(verts[i][0], verts[i][1], verts[i][2]);
 					MPointOnMesh pom;
 					octree.getClosestPoint(mf, pom);
