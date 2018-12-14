@@ -291,8 +291,7 @@ class BlurRelax : public MPxDeformerNode {
 			const std::vector<double> &valence, // as float for vectorizing
 			const std::vector<bool> &pinPoints,
 			const std::vector<UINT> &creaseCount,
-			double(*verts)[4], // already resized
-			const double(*baseVerts)[4] // already resized
+			double(*verts)[4] // already resized
 		);
 };
 
@@ -440,7 +439,11 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 	MStatus status;
 	MDataHandle hEnv = dataBlock.inputValue(envelope);
 	float env = hEnv.asFloat();
-	if (env > 0.0f){
+
+	MDataHandle hIter = dataBlock.inputValue(aIterations);
+	int iterations = hIter.asInt();
+
+	if (iterations > 0 && env > 0.0f){
 		// Get the data from the node
 		MDataHandle hBorder = dataBlock.inputValue(aBorderBehavior);
 		short bb = hBorder.asShort();
@@ -450,8 +453,6 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		short gb = hGroupEdge.asShort();
 		MDataHandle hReproject = dataBlock.inputValue(aReproject);
 		bool reproject = hReproject.asBool();
-		MDataHandle hIter = dataBlock.inputValue(aIterations);
-		int iterations = hIter.asInt();
 
 		// get the input mesh corresponding to this output
 		MObject thisNode = this->thisMObject();
@@ -472,17 +473,14 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		std::vector<bool> pinPoints;
 		std::vector<UINT> creaseCount;
 
-		// Get the weight values
+		// Get the point values
 		MFnMesh meshFn(mesh);
 		MPointArray mpa;
 		meshFn.getPoints(mpa);
 		UINT numVerts = meshFn.numVertices();
-		std::vector<float> weightVals;
-		status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
 
 		// Build and fill the raw float data buffers
 		double (*verts)[4] = new double[numVerts][4];
-		double (*baseVerts)[4] = new double[numVerts][4];
 		mpa.get(verts);
 
 		// Populate the variables with *SPECIALLY ORDERED* data
@@ -491,33 +489,30 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 			group, order, invOrder, neighbors, hardEdges, shiftVal, shiftComp, valence,
 			pinPoints, creaseCount, verts);
 
-		// make a copy of the original verts in the special order
-		for (size_t i = 0; i < numVerts; ++i) {
-			memcpy(baseVerts[i], verts[i], 3*sizeof(double)); // Is it any faster?
-			//for (size_t x = 0; x < 3; ++x) baseVerts[i][x] = verts[i][x];
+		// This can happen if the user is pinning all the points
+		// or all the edges are hard (like when you import an obj)
+		if (neighbors.empty()) {
+			delete verts;
+			return status;
 		}
 
 		// Calculate the relax, and store in verts
 		quickRelax(mesh, bb, hb, gb, reproject,
 			iterations, numVerts, group, order, invOrder, neighbors, hardEdges, shiftVal,
-			shiftComp, valence, pinPoints, creaseCount, verts, baseVerts);
+			shiftComp, valence, pinPoints, creaseCount, verts);
 
-		// undo ordering, and put into baseVerts so I don't have to allocate more memory
-		for (size_t i = 0; i < order.size(); ++i) {
-			for (size_t x = 0; x < 3; ++x)
-				baseVerts[order[i]][x] = verts[i][x];
-			baseVerts[order[i]][3] = 1.0f; // maya keeps 
-		}
+		// Get the painted weight values
+		std::vector<float> weightVals;
+		status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
 
 		// Finally set the output
 		for (; !vertIter.isDone(); vertIter.next()) {
 			const UINT idx = vertIter.index();
-			vertIter.setPosition((weightVals[idx]) * MPoint(baseVerts[idx]) + (1.0 - weightVals[idx]) * vertIter.position());
+			vertIter.setPosition((weightVals[idx]) * MPoint(verts[invOrder[idx]]) + (1.0 - weightVals[idx]) * vertIter.position());
 		}
 
 		// Make sure to clean up after myself
 		delete verts;
-		delete baseVerts;
 	}
 	return status;
 }
@@ -563,11 +558,10 @@ void BlurRelax::buildQuickData(
 
 	MFnMesh meshFn(mesh);
 	UINT numVertices = meshFn.numVertices();
-	float(*rawVerts)[4] = new float[numVertices][4];
-
+	double(*rawVerts)[4] = new double[numVertices][4];
 	for (size_t i = 0; i < numVertices; ++i) {
-		for (size_t x = 0; x < 3; ++x)
-			rawVerts[i][x] = verts[i][x];
+		memcpy(rawVerts[i], verts[i], sizeof(double) * 4);
+		//for (size_t x = 0; x < 3; ++x) rawVerts[i][x] = verts[i][x];
 	}
 
 	std::vector<bool> rawPinPoints;
@@ -585,8 +579,8 @@ void BlurRelax::buildQuickData(
 	rawHardEdges.resize(numVertices);
 	rawNeighbors.resize(numVertices);
 
-	for (auto &rh : rawHardEdges) { rh.reserve(4); }
-	for (auto &rn : rawNeighbors) { rn.reserve(4); }
+	//for (auto &rh : rawHardEdges) { rh.reserve(4); }
+	//for (auto &rn : rawNeighbors) { rn.reserve(4); }
 
 	// Get the group data
 	group.resize(numVertices);
@@ -763,17 +757,22 @@ void BlurRelax::quickRelax(
 	const std::vector<double> &valence, // as float for vectorizing
 	const std::vector<bool> &pinPoints,
 	const std::vector<UINT> &creaseCount,
-	double(*verts)[4], // already resized
-	const double(*baseVerts)[4] // already resized
+	double(*verts)[4] // already resized
 ) {
-	std::vector<size_t> groupIdxs;
-	for (size_t i = 0; i < group.size(); ++i) {
-		if (group[i]) groupIdxs.push_back(i);
-	}
 	bool rpEdges = (borderBehavior == BB_SLIDE) || (hardEdgeBehavior == HB_SLIDE) || (groupEdgeBehavior == GB_SLIDE);
+	std::vector<size_t> groupIdxs;
+
+	double (*baseVerts)[4];
+	if (rpEdges) {
+		for (size_t i = 0; i < group.size(); ++i) {
+			if (group[i]) groupIdxs.push_back(i);
+		}
+		// make a copy of the original verts only if they'll be used for edge reprojection
+		baseVerts = new double[numVerts][4];
+		memcpy(&(baseVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(double));
+	}
 
 	size_t nonzeroValence = neighbors[0].size();
-
 
 	MStatus status;
 	MFnMesh meshFn(mesh);
@@ -811,5 +810,8 @@ void BlurRelax::quickRelax(
 			}
 		}
 	}
+
+	if (rpEdges) delete baseVerts;
+
 }
 
