@@ -166,85 +166,6 @@ void edgeProject(
 }
 
 void quickLaplacianSmooth(
-	double verts[][4],
-	const size_t numVerts,
-	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<double> &valence,
-	const std::vector<float> &shiftVal,
-	const std::vector<float> &shiftComp,
-	const std::vector<bool> &pinPoints
-) {
-	/*
-	All the crazy hoops I've jumped through are to make auto-vectorization work
-	
-	neighbors and neighborOffsets work together to be a kind of pseudo-transpose
-	of a std::vector of neighbors per vert with that vector sorted so the verts
-	with the most neighbors were at the top.
-	neighborOffsets contains the index offsets of vertices with at least [index] of neighbors
-	So a single-subdivided cube would have 8 3-valence, and 18 4-valence for a total of 26 verts, and 96 neighbors
-	So the neighborOffsets would be [0, 26, 52, 78, 96] meaning that
-	verts 0-25 have at least 1 neighbor
-	verts 26-51 have at least 2 neighbors
-	verts 52-77 have at least 3 neighbors
-	verts 78-95 have at least 4 neighbors
-	*/
-
-	// The __restrict keyword tells the compiler that *output and all it's offsets
-	// are not pointed to by any other pointer in this scope
-	// This allows for auto-vectorization
-	// We assume that outpuoutput has been resized properly
-
-	double * __restrict outComp = new double[numVerts];
-	double * __restrict comp = new double[numVerts];
-	double(*output)[4] = new double[numVerts][4];
-
-	// number of nonzero valence
-	size_t nzv = neighbors[0].size();
-
-	// loop once for each component x,y,z
-	for (size_t c = 0; c < 3; ++c) {
-		// copy the component into contiguous memory
-		for (size_t i = 0; i < numVerts; ++i) {
-			comp[i] = verts[i][c];
-		}
-		// zero the accumulator
-		for (size_t i = 0; i < numVerts; ++i) {
-			outComp[i] = 0.0f;
-		}
-
-		for (size_t ncIdx = 0; ncIdx < neighbors.size(); ++ncIdx) {
-			const auto &nCol = neighbors[ncIdx];
-			size_t nColCount = nCol.size();
-			for (size_t i = 0; i < nColCount; ++i) {
-				outComp[i] = outComp[i] + comp[nCol[i]];
-			}
-		}
-
-		// Depending on the compiler optimization, it may be faster to break up this line
-		// Gotta test
-		for (size_t i = 0; i < nzv; ++i) {
-			outComp[i] = shiftVal[i] * (outComp[i] / valence[i]) + shiftComp[i] * comp[i];
-		}
-
-		// reset the data into the output
-		for (size_t i = 0; i < numVerts; ++i) {
-			output[i][c] = outComp[i];
-		}
-	}
-
-	for (size_t i = 0; i < nzv; ++i) {
-		//if (!pinPoints[i]) {
-			for (size_t x = 0; x < 3; ++x)
-				verts[i][x] = output[i][x];
-		//}
-	}
-
-	delete outComp;
-	delete comp;
-	delete output;
-}
-
-void quickLaplacianSmooth2(
 	double verts2d[][4],
 	const size_t numVerts,
 	const std::vector<std::vector<size_t>> &neighbors,
@@ -255,7 +176,7 @@ void quickLaplacianSmooth2(
 ) {
 	/*
 	All the crazy hoops I've jumped through are to make auto-vectorization work
-	
+
 	neighbors and neighborOffsets work together to be a kind of pseudo-transpose
 	of a std::vector of neighbors per vert with that vector sorted so the verts
 	with the most neighbors were at the top.
@@ -271,21 +192,15 @@ void quickLaplacianSmooth2(
 	// First, get verts as a single pointer to the contiguous memory stored in (verts*)[4]
 	double* verts = &(verts2d[0][0]);
 
-	// The __restrict keyword tells the compiler that *output and all it's offsets
-	// are not pointed to by any other pointer in this scope
-	// This allows for auto-vectorization
-	// We assume that outpuoutput has been resized properly
-
 	// number of nonzero valence
 	size_t nzv = neighbors[0].size();
 	size_t nzc = 4 * nzv;
 
+	// The __restrict keyword tells the compiler that *outComp
+	// are not pointed to by any other pointer in this scope
+	// This allows for auto-vectorization
 	double * __restrict outComp = new double[nzc];
-	double * __restrict comp = new double[nzc];
-
-	for (size_t i = 0; i < nzc; ++i) {
-		outComp[i] = 0.0f;
-	}
+	memset(outComp, 0, nzc*sizeof(double));
 
 	for (size_t ncIdx = 0; ncIdx < neighbors.size(); ++ncIdx) {
 		const auto &nCol = neighbors[ncIdx];
@@ -304,10 +219,8 @@ void quickLaplacianSmooth2(
 		outComp[i] = shiftVal[i] * (outComp[i] / valence[i]) + shiftComp[i] * verts[i];
 	}
 
-	memcpy(verts, outComp, nzc * sizeof(double));
-
+	memcpy(verts, outComp, nzc*sizeof(double));
 	delete outComp;
-	delete comp;
 }
 
 
@@ -319,12 +232,7 @@ class BlurRelax : public MPxDeformerNode {
 		static void* creator();
 		static MStatus initialize();
 
-#if defined(USE_DEFORM)
 		MStatus deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MMatrix& matrix, UINT multiIndex) override;
-#else
-		MStatus compute(const MPlug& plug, MDataBlock& dataBlock) override;
-#endif
-
 
 	public:
 		// local node attributes
@@ -527,10 +435,6 @@ MStatus BlurRelax::initialize() {
 	return MStatus::kSuccess;
 }
 
-
-
-
-#if defined(USE_DEFORM)
 MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MMatrix& matrix, UINT multiIndex) {
 	// Short circuit if the envelope is zero
 	MStatus status;
@@ -617,123 +521,6 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 	}
 	return status;
 }
-
-#else
-
-
-
-MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
-	MStatus status = MStatus::kUnknownParameter;
-	if (plug.attribute() == outputGeom) {
-		// Get the behavior options
-		MDataHandle hBorder = dataBlock.inputValue(aBorderBehavior);
-		short bb = hBorder.asShort();
-		MDataHandle hHardEdge = dataBlock.inputValue(aHardEdgeBehavior);
-		short hb = hHardEdge.asShort();
-		MDataHandle hGroupEdge = dataBlock.inputValue(aGroupEdgeBehavior);
-		short gb = hGroupEdge.asShort();
-		MDataHandle hReproject = dataBlock.inputValue(aReproject);
-		bool reproject = hReproject.asBool();
-		MDataHandle hIter = dataBlock.inputValue(aIterations);
-		int iterations = hIter.asInt();
-		MDataHandle hEnv = dataBlock.inputValue(envelope);
-		float env = hEnv.asFloat();
-
-		// get the input corresponding to this output
-		unsigned int multiIndex = plug.logicalIndex();
-		MObject thisNode = this->thisMObject();
-		MPlug inPlug(thisNode, input);
-		inPlug.selectAncestorLogicalIndex(multiIndex, input);
-		MDataHandle hInput = dataBlock.inputValue(inPlug);
-
-		// get the input geometry and input groupId
-		MDataHandle hGeom = hInput.child(inputGeom);
-		MDataHandle hGroup = hInput.child(groupId);
-		unsigned int groupId = hGroup.asLong();
-
-		MDataHandle hOutput = dataBlock.outputValue(plug);
-		hOutput.copy(hGeom);
-
-		// Maya might do some tricky stuff like not store the weight array at all for certain weight
-		// values so we can't count on an array existing in the weightList.  For the OpenCL Kernel
-		// we want an array with one weight in it per vertex, we need to build it carefully here.
-
-		// Two possibilities: we could have a sparse array in weightList[multiIndex] or there could be nothing in weightList[multiIndex].
-		// if nothing is there then all the weights at 1.0f.
-
-		// Get a handle to the weight array we want.
-		if (env > 0.0f){
-			MObject mesh = hOutput.asMesh();
-			MFnMesh meshFn(mesh);
-			MFloatPointArray mfp;
-			meshFn.getPoints(mfp);
-			UINT numVerts = meshFn.numVertices();
-
-			double (*verts)[4] = new double[numVerts][4];
-			double (*baseVerts)[4] = new double[numVerts][4];
-			mfp.get(verts);
-
-			std::vector<float> weightVals;
-			status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
-
-			//shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-			//shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
-			//valence, // as float for vectorizing
-
-			std::vector<bool> group;
-			std::vector<size_t> order;
-			std::vector<size_t> invOrder;
-			std::vector<std::vector<size_t>> neighbors;
-			std::vector<std::vector<bool>> hardEdges;
-			std::vector<double> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
-			std::vector<double> shiftComp; // normally 0.5; but it's 0.75 if on a hard edge
-			std::vector<double> valence; // as float for vectorizing
-			std::vector<bool> pinPoints;
-			std::vector<UINT> creaseCount;
-
-
-			MItGeometry vertIter(hOutput, groupId, false);
-
-			buildQuickData(mesh, vertIter, bb, hb, gb, reproject,
-				group, order, invOrder, neighbors, hardEdges, shiftVal, shiftComp, valence,
-				pinPoints, creaseCount, verts);
-
-			for (size_t i = 0; i < numVerts; ++i) {
-				memcpy(baseVerts[i], verts[i], 3*sizeof(double)); // Is it any faster?
-				//for (size_t x = 0; x < 3; ++x) baseVerts[i][x] = verts[i][x];
-			}
-
-			quickRelax(mesh, bb, hb, gb, reproject,
-				iterations, numVerts, group, order, invOrder, neighbors, hardEdges, shiftVal,
-				shiftComp, valence, pinPoints, creaseCount, verts, baseVerts);
-
-			// undo ordering
-			for (size_t i = 0; i < order.size(); ++i) {
-				memcpy(baseVerts[order[i]], verts[i], 4*sizeof(double));
-				//for (size_t x = 0; x < 3; ++x)
-					//baseVerts[order[i]][x] = verts[i][x];
-				//baseVerts[order[i]][3] = 1.0f; // maya keeps 
-			}
-
-			//MFloatPointArray outMfp(baseVerts, numVerts);
-			//meshFn.setPoints(outMfp);
-
-			// TODO: vectorize this??
-			for (; !vertIter.isDone(); vertIter.next()) {
-				UINT idx = vertIter.index();
-				vertIter.setPosition((weightVals[idx]) * MPoint(baseVerts[idx]) + (1.0 - weightVals[idx]) * vertIter.position());
-			}
-
-			delete verts;
-			delete baseVerts;
-		}
-		hOutput.setClean();
-	}
-	return status;
-}
-
-#endif
-
 
 MStatus initializePlugin(MObject obj) {
 	MStatus result;
@@ -1004,7 +791,7 @@ void BlurRelax::quickRelax(
 	}
 
 	for (size_t r = 0; r < iterations; ++r) {
-		quickLaplacianSmooth2(verts, numVerts, neighbors, valence, shiftVal, shiftComp, pinPoints);
+		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, shiftComp, pinPoints);
 		if (rpEdges) {
 			edgeProject(baseVerts, groupIdxs, invOrder, neighbors, hardEdges, creaseCount, verts);
 		}
