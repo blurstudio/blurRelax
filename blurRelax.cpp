@@ -73,14 +73,17 @@ SOFTWARE.
 
 #define DEFORMER_NAME "BlurRelax"
 
+#define USE_DEFORM
+
+
 void edgeProject(
-	const float basePoints[][4],
+	const double basePoints[][4],
 	const std::vector<size_t> &group,
 	const std::vector<size_t> &invOrder,
 	const std::vector<std::vector<size_t>> &neighbors,
 	const std::vector<std::vector<bool>> &hardEdges,
 	const std::vector<UINT> &creaseCount,
-	float smoothPoints[][4]
+	double smoothPoints[][4]
 ) {
 	/*
 	This code takes the edges that have been defined as hard
@@ -98,14 +101,10 @@ void edgeProject(
 		// assume that all stored neighbors are hard.
 		size_t idx = invOrder[group[gidx]];
 
-		float *avg = smoothPoints[idx];
-		const float *basePos = basePoints[idx];
-		if (creaseCount[idx] != 2) {
-			//for (size_t x = 0; x < 3; ++x)
-				//avg[x] = basePos[x];
-			continue;
-		}
-		float keep[3], delta[3], edge[3];
+		double *avg = smoothPoints[idx];
+		const double *basePos = basePoints[idx];
+		if (creaseCount[idx] != 2) { continue; }
+		double keep[3], delta[3], edge[3];
 
 		neigh.clear();
 		for (size_t i = 0; i < neighbors.size(); ++i) {
@@ -116,7 +115,7 @@ void edgeProject(
 		}
 
 		// TODO: Find the hard edge strings and reproject onto those
-		float minLen = std::numeric_limits<float>::max();
+		double minLen = std::numeric_limits<double>::max();
 		bool found = false;
 
 		// avg - basePos
@@ -129,26 +128,26 @@ void edgeProject(
 			// normalized(prevPoints[n] - basePos)
 			for (size_t x = 0; x < 3; ++x)
 				edge[x] = basePoints[n][x] - basePos[x];
-			float elen = sqrt(edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2]);
+			double elen = sqrt(edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2]);
 			for (size_t x = 0; x < 3; ++x)
 				edge[x] /= elen;
 
 			// dot(delta, edge)
-			float dd = delta[0] * edge[0] + delta[1] * edge[1] + delta[2] * edge[2];
+			double dd = delta[0] * edge[0] + delta[1] * edge[1] + delta[2] * edge[2];
 
-			float dn[3] = { 0.0f, 0.0f, 0.0f };
+			double dn[3] = { 0.0f, 0.0f, 0.0f };
 			if (dd > 0.0) {
 				for (size_t x = 0; x < 3; ++x)
 					dn[x] = edge[x] * dd;
 			}
-			float xx[3];
+			double xx[3];
 
 			// delta - dn
 			for (size_t x = 0; x < 3; ++x)
 				xx[x] = delta[x] - dn[x];
 
 			// dot(xx, xx)
-			float len2 = xx[0] * xx[0] + xx[1] * xx[1] + xx[2] * xx[2];
+			double len2 = xx[0] * xx[0] + xx[1] * xx[1] + xx[2] * xx[2];
 
 			if (len2 < minLen) {
 				minLen = len2;
@@ -167,10 +166,10 @@ void edgeProject(
 }
 
 void quickLaplacianSmooth(
-	float verts[][4],
+	double verts[][4],
 	const size_t numVerts,
 	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<float> &valence,
+	const std::vector<double> &valence,
 	const std::vector<float> &shiftVal,
 	const std::vector<float> &shiftComp,
 	const std::vector<bool> &pinPoints
@@ -195,9 +194,9 @@ void quickLaplacianSmooth(
 	// This allows for auto-vectorization
 	// We assume that outpuoutput has been resized properly
 
-	float * __restrict outComp = new float[numVerts];
-	float * __restrict comp = new float[numVerts];
-	float(*output)[4] = new float[numVerts][4];
+	double * __restrict outComp = new double[numVerts];
+	double * __restrict comp = new double[numVerts];
+	double(*output)[4] = new double[numVerts][4];
 
 	// number of nonzero valence
 	size_t nzv = neighbors[0].size();
@@ -245,6 +244,73 @@ void quickLaplacianSmooth(
 	delete output;
 }
 
+void quickLaplacianSmooth2(
+	double verts2d[][4],
+	const size_t numVerts,
+	const std::vector<std::vector<size_t>> &neighbors,
+	const std::vector<double> &valence,
+	const std::vector<double> &shiftVal,
+	const std::vector<double> &shiftComp,
+	const std::vector<bool> &pinPoints
+) {
+	/*
+	All the crazy hoops I've jumped through are to make auto-vectorization work
+	
+	neighbors and neighborOffsets work together to be a kind of pseudo-transpose
+	of a std::vector of neighbors per vert with that vector sorted so the verts
+	with the most neighbors were at the top.
+	neighborOffsets contains the index offsets of vertices with at least [index] of neighbors
+	So a single-subdivided cube would have 8 3-valence, and 18 4-valence for a total of 26 verts, and 96 neighbors
+	So the neighborOffsets would be [0, 26, 52, 78, 96] meaning that
+	verts 0-25 have at least 1 neighbor
+	verts 26-51 have at least 2 neighbors
+	verts 52-77 have at least 3 neighbors
+	verts 78-95 have at least 4 neighbors
+	*/
+
+	// First, get verts as a single pointer to the contiguous memory stored in (verts*)[4]
+	double* verts = &(verts2d[0][0]);
+
+	// The __restrict keyword tells the compiler that *output and all it's offsets
+	// are not pointed to by any other pointer in this scope
+	// This allows for auto-vectorization
+	// We assume that outpuoutput has been resized properly
+
+	// number of nonzero valence
+	size_t nzv = neighbors[0].size();
+	size_t nzc = 4 * nzv;
+
+	double * __restrict outComp = new double[nzc];
+	double * __restrict comp = new double[nzc];
+
+	for (size_t i = 0; i < nzc; ++i) {
+		outComp[i] = 0.0f;
+	}
+
+	for (size_t ncIdx = 0; ncIdx < neighbors.size(); ++ncIdx) {
+		const auto &nCol = neighbors[ncIdx];
+		size_t nColCount = nCol.size();
+		for (size_t i = 0; i < nColCount; ++i) {
+			size_t nci = 4 * nCol[i];
+			for (size_t j = 0; j < 4; ++j) {
+				outComp[4*i+j] = outComp[4*i+j] + verts[nci+j];
+			}
+		}
+	}
+
+	// Depending on the compiler optimization, it may be faster to break up this line
+	// Gotta test
+	for (size_t i = 0; i < nzc; ++i) {
+		outComp[i] = shiftVal[i] * (outComp[i] / valence[i]) + shiftComp[i] * verts[i];
+	}
+
+	memcpy(verts, outComp, nzc * sizeof(double));
+
+	delete outComp;
+	delete comp;
+}
+
+
 class BlurRelax : public MPxDeformerNode {
 	public:
 		BlurRelax();
@@ -252,7 +318,13 @@ class BlurRelax : public MPxDeformerNode {
 
 		static void* creator();
 		static MStatus initialize();
+
+#if defined(USE_DEFORM)
+		MStatus deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MMatrix& matrix, UINT multiIndex) override;
+#else
 		MStatus compute(const MPlug& plug, MDataBlock& dataBlock) override;
+#endif
+
 
 	public:
 		// local node attributes
@@ -274,8 +346,8 @@ class BlurRelax : public MPxDeformerNode {
 				) const;
 
 		void BlurRelax::buildQuickData(
-			MDataHandle &meshHandle,
-			UINT groupId,
+			MObject &mesh,
+			MItGeometry& vertIter,
 			short borderBehavior,
 			short hardEdgeBehavior,
 			short groupEdgeBehavior,
@@ -285,12 +357,12 @@ class BlurRelax : public MPxDeformerNode {
 			std::vector<size_t> &order,
 			std::vector<std::vector<size_t>> &neighbors,
 			std::vector<std::vector<bool>> &hardEdges,
-			std::vector<float> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-			std::vector<float> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
-			std::vector<float> &valence, // as float for vectorizing
+			std::vector<double> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
+			std::vector<double> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
+			std::vector<double> &valence, // as float for vectorizing
 			std::vector<bool> &pinPoints,
 			std::vector<UINT> &creaseCount,
-			float(*verts)[4]
+			double(*verts)[4]
 		);
 
 		void quickRelax(
@@ -306,13 +378,13 @@ class BlurRelax : public MPxDeformerNode {
 			const std::vector<size_t> &invOrder,
 			const std::vector<std::vector<size_t>> &neighbors,
 			const std::vector<std::vector<bool>> &hardEdges,
-			const std::vector<float> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-			const std::vector<float> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
-			const std::vector<float> &valence, // as float for vectorizing
+			const std::vector<double> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
+			const std::vector<double> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
+			const std::vector<double> &valence, // as float for vectorizing
 			const std::vector<bool> &pinPoints,
 			const std::vector<UINT> &creaseCount,
-			float(*verts)[4], // already resized
-			const float(*baseVerts)[4] // already resized
+			double(*verts)[4], // already resized
+			const double(*baseVerts)[4] // already resized
 		);
 };
 
@@ -455,6 +527,101 @@ MStatus BlurRelax::initialize() {
 	return MStatus::kSuccess;
 }
 
+
+
+
+#if defined(USE_DEFORM)
+MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MMatrix& matrix, UINT multiIndex) {
+	// Short circuit if the envelope is zero
+	MStatus status;
+	MDataHandle hEnv = dataBlock.inputValue(envelope);
+	float env = hEnv.asFloat();
+	if (env > 0.0f){
+		// Get the data from the node
+		MDataHandle hBorder = dataBlock.inputValue(aBorderBehavior);
+		short bb = hBorder.asShort();
+		MDataHandle hHardEdge = dataBlock.inputValue(aHardEdgeBehavior);
+		short hb = hHardEdge.asShort();
+		MDataHandle hGroupEdge = dataBlock.inputValue(aGroupEdgeBehavior);
+		short gb = hGroupEdge.asShort();
+		MDataHandle hReproject = dataBlock.inputValue(aReproject);
+		bool reproject = hReproject.asBool();
+		MDataHandle hIter = dataBlock.inputValue(aIterations);
+		int iterations = hIter.asInt();
+
+		// get the input mesh corresponding to this output
+		MObject thisNode = this->thisMObject();
+		MPlug inPlug(thisNode, input);
+		inPlug.selectAncestorLogicalIndex(multiIndex, input);
+		MDataHandle hInput = dataBlock.inputValue(inPlug);
+		MObject mesh = hInput.asMesh();
+
+		// Initialize the variables
+		std::vector<bool> group;
+		std::vector<size_t> order;
+		std::vector<size_t> invOrder;
+		std::vector<std::vector<size_t>> neighbors;
+		std::vector<std::vector<bool>> hardEdges;
+		std::vector<double> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
+		std::vector<double> shiftComp; // normally 0.5; but it's 0.75 if on a hard edge
+		std::vector<double> valence; // as float for vectorizing
+		std::vector<bool> pinPoints;
+		std::vector<UINT> creaseCount;
+
+		// Get the weight values
+		MFnMesh meshFn(mesh);
+		MPointArray mpa;
+		meshFn.getPoints(mpa);
+		UINT numVerts = meshFn.numVertices();
+		std::vector<float> weightVals;
+		status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
+
+		// Build and fill the raw float data buffers
+		double (*verts)[4] = new double[numVerts][4];
+		double (*baseVerts)[4] = new double[numVerts][4];
+		mpa.get(verts);
+
+		// Populate the variables with *SPECIALLY ORDERED* data
+		// all vertex data is now shuffled by the order vector
+		buildQuickData(mesh, vertIter, bb, hb, gb, reproject,
+			group, order, invOrder, neighbors, hardEdges, shiftVal, shiftComp, valence,
+			pinPoints, creaseCount, verts);
+
+		// make a copy of the original verts in the special order
+		for (size_t i = 0; i < numVerts; ++i) {
+			memcpy(baseVerts[i], verts[i], 3*sizeof(double)); // Is it any faster?
+			//for (size_t x = 0; x < 3; ++x) baseVerts[i][x] = verts[i][x];
+		}
+
+		// Calculate the relax, and store in verts
+		quickRelax(mesh, bb, hb, gb, reproject,
+			iterations, numVerts, group, order, invOrder, neighbors, hardEdges, shiftVal,
+			shiftComp, valence, pinPoints, creaseCount, verts, baseVerts);
+
+		// undo ordering, and put into baseVerts so I don't have to allocate more memory
+		for (size_t i = 0; i < order.size(); ++i) {
+			for (size_t x = 0; x < 3; ++x)
+				baseVerts[order[i]][x] = verts[i][x];
+			baseVerts[order[i]][3] = 1.0f; // maya keeps 
+		}
+
+		// Finally set the output
+		for (; !vertIter.isDone(); vertIter.next()) {
+			const UINT idx = vertIter.index();
+			vertIter.setPosition((weightVals[idx]) * MPoint(baseVerts[idx]) + (1.0 - weightVals[idx]) * vertIter.position());
+		}
+
+		// Make sure to clean up after myself
+		delete verts;
+		delete baseVerts;
+	}
+	return status;
+}
+
+#else
+
+
+
 MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 	MStatus status = MStatus::kUnknownParameter;
 	if (plug.attribute() == outputGeom) {
@@ -473,10 +640,10 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 		float env = hEnv.asFloat();
 
 		// get the input corresponding to this output
-		unsigned int index = plug.logicalIndex();
+		unsigned int multiIndex = plug.logicalIndex();
 		MObject thisNode = this->thisMObject();
 		MPlug inPlug(thisNode, input);
-		inPlug.selectAncestorLogicalIndex(index, input);
+		inPlug.selectAncestorLogicalIndex(multiIndex, input);
 		MDataHandle hInput = dataBlock.inputValue(inPlug);
 
 		// get the input geometry and input groupId
@@ -502,12 +669,12 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 			meshFn.getPoints(mfp);
 			UINT numVerts = meshFn.numVertices();
 
-			float (*verts)[4] = new float[numVerts][4];
-			float (*baseVerts)[4] = new float[numVerts][4];
+			double (*verts)[4] = new double[numVerts][4];
+			double (*baseVerts)[4] = new double[numVerts][4];
 			mfp.get(verts);
-			
+
 			std::vector<float> weightVals;
-			status = getTrueWeights(mesh, dataBlock, index, weightVals, env);
+			status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
 
 			//shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
 			//shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
@@ -518,18 +685,22 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 			std::vector<size_t> invOrder;
 			std::vector<std::vector<size_t>> neighbors;
 			std::vector<std::vector<bool>> hardEdges;
-			std::vector<float> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
-			std::vector<float> shiftComp; // normally 0.5; but it's 0.75 if on a hard edge
-			std::vector<float> valence; // as float for vectorizing
+			std::vector<double> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
+			std::vector<double> shiftComp; // normally 0.5; but it's 0.75 if on a hard edge
+			std::vector<double> valence; // as float for vectorizing
 			std::vector<bool> pinPoints;
 			std::vector<UINT> creaseCount;
 
-			buildQuickData(hOutput, groupId, bb, hb, gb, reproject,
+
+			MItGeometry vertIter(hOutput, groupId, false);
+
+			buildQuickData(mesh, vertIter, bb, hb, gb, reproject,
 				group, order, invOrder, neighbors, hardEdges, shiftVal, shiftComp, valence,
 				pinPoints, creaseCount, verts);
 
 			for (size_t i = 0; i < numVerts; ++i) {
-				for (size_t x = 0; x < 3; ++x) baseVerts[i][x] = verts[i][x];
+				memcpy(baseVerts[i], verts[i], 3*sizeof(double)); // Is it any faster?
+				//for (size_t x = 0; x < 3; ++x) baseVerts[i][x] = verts[i][x];
 			}
 
 			quickRelax(mesh, bb, hb, gb, reproject,
@@ -538,19 +709,19 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 
 			// undo ordering
 			for (size_t i = 0; i < order.size(); ++i) {
-				for (size_t x = 0; x < 3; ++x)
-					baseVerts[order[i]][x] = verts[i][x];
-				baseVerts[order[i]][3] = 1.0f; // maya keeps 
+				memcpy(baseVerts[order[i]], verts[i], 4*sizeof(double));
+				//for (size_t x = 0; x < 3; ++x)
+					//baseVerts[order[i]][x] = verts[i][x];
+				//baseVerts[order[i]][3] = 1.0f; // maya keeps 
 			}
 
-			MFloatPointArray outMfp(baseVerts, numVerts);
-			meshFn.setPoints(outMfp);
+			//MFloatPointArray outMfp(baseVerts, numVerts);
+			//meshFn.setPoints(outMfp);
 
 			// TODO: vectorize this??
-			MItGeometry vertIter(hOutput, groupId, false);
 			for (; !vertIter.isDone(); vertIter.next()) {
 				UINT idx = vertIter.index();
-				vertIter.setPosition((1.0 - weightVals[idx]) * mfp[idx] + weightVals[idx] * vertIter.position());
+				vertIter.setPosition((weightVals[idx]) * MPoint(baseVerts[idx]) + (1.0 - weightVals[idx]) * vertIter.position());
 			}
 
 			delete verts;
@@ -560,6 +731,9 @@ MStatus BlurRelax::compute(const MPlug& plug, MDataBlock& dataBlock) {
 	}
 	return status;
 }
+
+#endif
+
 
 MStatus initializePlugin(MObject obj) {
 	MStatus result;
@@ -577,8 +751,8 @@ MStatus uninitializePlugin(MObject obj) {
 }
 
 void BlurRelax::buildQuickData(
-	MDataHandle &meshHandle,
-	UINT groupId,
+	MObject &mesh,
+	MItGeometry& vertIter,
 	short borderBehavior,
 	short hardEdgeBehavior,
 	short groupEdgeBehavior,
@@ -588,19 +762,18 @@ void BlurRelax::buildQuickData(
 	std::vector<size_t> &invOrder,
 	std::vector<std::vector<size_t>> &neighbors,
 	std::vector<std::vector<bool>> &hardEdges,
-	std::vector<float> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-	std::vector<float> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
-	std::vector<float> &valence, // as float for vectorizing
+	std::vector<double> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
+	std::vector<double> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
+	std::vector<double> &valence, // as float for vectorizing
 	std::vector<bool> &pinPoints,
 	std::vector<UINT> &creaseCount,
-	float(*verts)[4] // already resized
+	double(*verts)[4] // already resized
 ) {
 	// This takes the mesh, Gets all the required data, reorders so
 	// the verts are in descending order of valence, and gets the subgroup
 	// I'm trying to pre-process everything I can right here so I don't have to
 	// branch in quickLaplacianSmooth() so auto-vectorization works
 
-	MObject mesh = meshHandle.asMesh();
 	MFnMesh meshFn(mesh);
 	UINT numVertices = meshFn.numVertices();
 	float(*rawVerts)[4] = new float[numVertices][4];
@@ -625,12 +798,15 @@ void BlurRelax::buildQuickData(
 	rawHardEdges.resize(numVertices);
 	rawNeighbors.resize(numVertices);
 
+	for (auto &rh : rawHardEdges) { rh.reserve(4); }
+	for (auto &rn : rawNeighbors) { rn.reserve(4); }
+
 	// Get the group data
 	group.resize(numVertices);
-	MItGeometry vertIter(meshHandle, groupId, true);
 	for (; !vertIter.isDone(); vertIter.next()) {
 		group[vertIter.index()] = true;
 	}
+	vertIter.reset();
 
 	// Get the connectivity data
 	// The big trick is that all pinning happens once, right here
@@ -646,9 +822,10 @@ void BlurRelax::buildQuickData(
 		// hard and unpinned means slide if there are exactly 2 connected hard edges
 		// hard and unpinned means pin otherwise
 		// TODO: Also handle *IGNORED* neighbors
-		const bool hard = (edgeIter.onBoundary() && borderBehavior) || (!edgeIter.isSmooth() && !edgeIter.onBoundary() && hardEdgeBehavior);
-		const bool pin = ((borderBehavior == BB_PIN) && edgeIter.onBoundary()) ||
-			((hardEdgeBehavior == HB_PIN) && !edgeIter.isSmooth() && !edgeIter.onBoundary());
+		const bool onBound = edgeIter.onBoundary();
+		const bool isHard = !edgeIter.isSmooth();
+		const bool hard = (onBound && borderBehavior) || (isHard && !onBound && hardEdgeBehavior);
+		const bool pin = ((borderBehavior == BB_PIN) && onBound) || ((hardEdgeBehavior == HB_PIN) && isHard && !onBound);
 
 		const bool startInGroup = group[start];
 		const bool endInGroup = group[end];
@@ -706,12 +883,12 @@ void BlurRelax::buildQuickData(
 	// if a vert is pinned remove all of its neighbors
 	// if a vert has a pinned neighbor, remove it
 
-	std::vector<float> rawShiftVal;
-	std::vector<float> rawShiftComp;
+	std::vector<double> rawShiftVal;
+	std::vector<double> rawShiftComp;
 	rawShiftVal.resize(numVertices);
 	rawShiftComp.resize(numVertices);
-	std::fill(rawShiftVal.begin(), rawShiftVal.end(), 0.5f);
-	std::fill(rawShiftComp.begin(), rawShiftComp.end(), 0.5f);
+	std::fill(rawShiftVal.begin(), rawShiftVal.end(), 0.5);
+	std::fill(rawShiftComp.begin(), rawShiftComp.end(), 0.5);
 
 	for (size_t i = 0; i < rawNeighbors.size(); ++i) {
 		if ((rawCreaseCount[i] != 0) || rawPinPoints[i]) {
@@ -742,14 +919,15 @@ void BlurRelax::buildQuickData(
 	std::sort(order.begin(), order.end(), [&rawNeighbors](UINT a, UINT b) {return rawNeighbors[a].size() > rawNeighbors[b].size(); });
 
 	// Build the "transposed" neighbor and hard edge values
-	valence.resize(numVertices);
 	size_t maxValence = rawNeighbors[order[0]].size();
 	neighbors.resize(maxValence);
 	hardEdges.resize(maxValence);
 	creaseCount.resize(numVertices);
 	pinPoints.resize(numVertices);
-	shiftVal.resize(numVertices);
-	shiftComp.resize(numVertices);
+
+	valence.resize(numVertices*4);
+	shiftVal.resize(numVertices*4);
+	shiftComp.resize(numVertices*4);
 
 	invOrder.resize(order.size());
 	for (size_t i = 0; i < order.size(); ++i) {
@@ -760,7 +938,6 @@ void BlurRelax::buildQuickData(
 		const std::vector<UINT> &neigh = rawNeighbors[order[i]];
 		const std::vector<bool> &hards = rawHardEdges[order[i]];
 		size_t vale = neigh.size();
-		valence[i] = (float)vale;
 		for (size_t n = 0; n < vale; ++n) {
 			neighbors[n].push_back(invOrder[neigh[n]]);
 			hardEdges[n].push_back(invOrder[hards[n]]);
@@ -769,8 +946,14 @@ void BlurRelax::buildQuickData(
 			verts[i][x] = rawVerts[order[i]][x];
 		creaseCount[i] = rawCreaseCount[order[i]];
 		pinPoints[i] = rawPinPoints[order[i]];
-		shiftVal[i] = rawShiftVal[order[i]];
-		shiftComp[i] = rawShiftComp[order[i]];
+
+		// Vectorizing flattens the vert list, so
+		// I need these per vert, per component
+		for (size_t xx = 0; xx < 4; ++xx) {
+			valence[4 * i + xx] = double(vale);
+			shiftVal[4 * i + xx] = rawShiftVal[order[i]];
+			shiftComp[4 * i + xx] = rawShiftComp[order[i]];
+		}
 	}
 	delete rawVerts;
 }
@@ -788,15 +971,14 @@ void BlurRelax::quickRelax(
 	const std::vector<size_t> &invOrder,
 	const std::vector<std::vector<size_t>> &neighbors,
 	const std::vector<std::vector<bool>> &hardEdges,
-	const std::vector<float> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-	const std::vector<float> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
-	const std::vector<float> &valence, // as float for vectorizing
+	const std::vector<double> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
+	const std::vector<double> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
+	const std::vector<double> &valence, // as float for vectorizing
 	const std::vector<bool> &pinPoints,
 	const std::vector<UINT> &creaseCount,
-	float(*verts)[4], // already resized
-	const float(*baseVerts)[4] // already resized
+	double(*verts)[4], // already resized
+	const double(*baseVerts)[4] // already resized
 ) {
-
 	std::vector<size_t> groupIdxs;
 	for (size_t i = 0; i < group.size(); ++i) {
 		if (group[i]) groupIdxs.push_back(i);
@@ -822,7 +1004,7 @@ void BlurRelax::quickRelax(
 	}
 
 	for (size_t r = 0; r < iterations; ++r) {
-		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, shiftComp, pinPoints);
+		quickLaplacianSmooth2(verts, numVerts, neighbors, valence, shiftVal, shiftComp, pinPoints);
 		if (rpEdges) {
 			edgeProject(baseVerts, groupIdxs, invOrder, neighbors, hardEdges, creaseCount, verts);
 		}
@@ -830,10 +1012,10 @@ void BlurRelax::quickRelax(
 			#pragma omp parallel for if(numVerts>2000)
 			for (int i = 0; i < nonzeroValence; ++i) {
 				if ((creaseCount[i] == 0) && (group[order[i]])) {
-					MFloatPoint mf(verts[i][0], verts[i][1], verts[i][2]);
+					MPoint mf(verts[i][0], verts[i][1], verts[i][2]);
 					MPointOnMesh pom;
 					octree.getClosestPoint(mf, pom);
-					MFloatPoint gpf = pom.getPoint();
+					MPoint gpf = pom.getPoint();
 					//mfp.set(gpf, i);
 					verts[i][0] = gpf[0];
 					verts[i][1] = gpf[1];
