@@ -189,23 +189,19 @@ void quickLaplacianSmooth(
 	of a std::vector of neighbors per vert with that vector sorted so the verts
 	with the most neighbors were at the top.
 	neighborOffsets contains the index offsets of vertices with at least [index] of neighbors
-	So a single-subdivided cube would have 8 3-valence, and 18 4-valence for a total of 26 verts, and 96 neighbors
-	So the neighborOffsets would be [0, 26, 52, 78, 96] meaning that
-	verts 0-25 have at least 1 neighbor
-	verts 26-51 have at least 2 neighbors
-	verts 52-77 have at least 3 neighbors
-	verts 78-95 have at least 4 neighbors
 	*/
 
-	// First, get verts as a single pointer to the contiguous memory stored in (verts*)[4]
+	// First, get verts as a single pointer to the contiguous memory stored in (verts2d*)[4]
 	float_t* verts = &(verts2d[0][0]);
 
 	// number of nonzero valence
 	size_t nzv = neighbors[0].size();
+
+	// number of nonzero components
 	size_t nzc = 4 * nzv;
 
 	// The __restrict keyword tells the compiler that *outComp
-	// are not pointed to by any other pointer in this scope
+	// is not pointed to by any other pointer in this scope
 	// This allows for auto-vectorization
 	float_t * __restrict outComp = new float_t[nzc];
 	memset(outComp, 0, nzc*sizeof(float_t));
@@ -221,8 +217,6 @@ void quickLaplacianSmooth(
 		}
 	}
 
-	// Depending on the compiler optimization, it may be faster to break up this line
-	// Gotta test
 	for (size_t i = 0; i < nzc; ++i) {
 		outComp[i] = shiftVal[i] * taubinBias * ((outComp[i] / valence[i]) - verts[i]) + verts[i];
 	}
@@ -287,7 +281,7 @@ class BlurRelax : public MPxDeformerNode {
 			const short groupEdgeBehavior,
 			const bool reproject,
 			const float taubinBias,
-			const UINT iterations,
+			const float_t iterations,
 			const UINT numVerts,
 			const std::vector<bool> &group,
 			const std::vector<size_t> &order,
@@ -430,7 +424,7 @@ MStatus BlurRelax::initialize() {
 	CHECKSTAT("aReproject");
 
 	// Taubin Bias is divided by 1000 internally
-	aTaubinBias = nAttr.create("preserveVolume", "pv", MFnNumericData::kFloat, 1.0f, &status);
+	aTaubinBias = nAttr.create("preserveVolume", "pv", MFnNumericData::kFloat, 0.0f, &status);
 	CHECKSTAT("aTaubinBias");
 	nAttr.setMin(0.0f);
 	nAttr.setMax(2.0f);
@@ -440,9 +434,9 @@ MStatus BlurRelax::initialize() {
 	status = attributeAffects(aTaubinBias, outputGeom);
 	CHECKSTAT("aTaubinBias");
 
-	aIterations = nAttr.create("iterations", "i", MFnNumericData::kInt, 10, &status);
+	aIterations = nAttr.create("iterations", "i", MFnNumericData::kFloat, 0, &status);
 	CHECKSTAT("aIterations");
-	nAttr.setMin(0);
+	nAttr.setMin(0.0);
 	nAttr.setChannelBox(true);
 	status = addAttribute(aIterations);
 	CHECKSTAT("aIterations");
@@ -461,7 +455,7 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 	float env = hEnv.asFloat();
 
 	MDataHandle hIter = dataBlock.inputValue(aIterations);
-	int iterations = hIter.asInt();
+	float iterations = hIter.asFloat();
 
 	if (iterations > 0 && env > 0.0f){
 		// Get the data from the node
@@ -476,12 +470,20 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 
 		MDataHandle hTBias = dataBlock.inputValue(aTaubinBias);
 		float tBias = hTBias.asFloat();
-		if (tBias > 0.0)
-			iterations = (iterations % 2) ? iterations / 2 + 1 : iterations / 2;
-		// So the numbers shown are useful to the user
-		// 0 maps to 1.0 and 1 maps to -1.0
-		//tBias = -1.0f - (tBias / 100.0f);
-		tBias = -2.0 * tBias + 1.0;
+		// volume preservation uses 2 steps per iteration
+		// so half the number of iterations if I'm volume preserving
+		// The iterations interpolating as floats takes care of 99% of the jumping
+		// There *will* be a tiny jump from 0.0 on preserve volume if
+		// reprojection is also turned on. I don't think I can get rid of that one
+		if (tBias > 0.0f) {
+			iterations /= 2.0f;
+		}
+		// So the numbers shown are intuitive to the user
+		// 0 maps to 1.0 and 1 maps to -1.05
+		// -1.05 is used because taubin smoothing needs something
+		// just a little over 1.0 to truly preserve volume,
+		// and that value looked good on my test mesh.
+		tBias = -2.05f * tBias + 1.0f;
 
 		// get the input mesh corresponding to this output
 		MObject thisNode = this->thisMObject();
@@ -765,7 +767,7 @@ void BlurRelax::quickRelax(
 	const short groupEdgeBehavior,
 	const bool reproject,
 	const float taubinBias,
-	const UINT iterations,
+	const float_t iterations,
 	const UINT numVerts,
 	const std::vector<bool> &group,
 	const std::vector<size_t> &order,
@@ -794,11 +796,13 @@ void BlurRelax::quickRelax(
 	float_t(*prevVerts)[4];
 	prevVerts = new float_t[numVerts][4];
 
-	float fIter, iterT, iterI;
-	iterT = modf(fIter, &iterI);
+	float_t iterT, iterFI;
+	iterT = modf(iterations, &iterFI);
+	UINT iterI = (UINT)iterFI;
+	if (iterT > 0.0) {
+		iterI += 1;
+	}
 	
-
-
 	size_t nonzeroValence = neighbors[0].size();
 
 	MStatus status;
@@ -816,8 +820,11 @@ void BlurRelax::quickRelax(
 		octree.create(smoothMesh);
 	}
 
-	for (size_t r = 0; r < iterations; ++r) {
-		memcpy(&(prevVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(float_t));
+	for (size_t r = 0; r < iterI; ++r) {
+		if ((r == iterI - 1) && (iterT > 0.0)){
+			// Store the next-to-last iteration to interpolate with
+			memcpy(&(prevVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(float_t));
+		}
 		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, pinPoints);
 		if (taubinBias < 1.0){
 			quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, pinPoints, taubinBias);
@@ -826,6 +833,7 @@ void BlurRelax::quickRelax(
 		if (rpEdges) {
 			edgeProject(baseVerts, groupIdxs, invOrder, neighbors, hardEdges, creaseCount, verts);
 		}
+
 		if (reproject) {
 			#pragma omp parallel for if(numVerts>2000)
 			for (int i = 0; i < nonzeroValence; ++i) {
@@ -840,6 +848,16 @@ void BlurRelax::quickRelax(
 					verts[i][2] = gpf[2];
 				}
 			}
+		}
+	}
+
+	// Interpolate between prevVerts and verts based on iterT
+	if (iterT > 0.0) {
+		// This should vectorize
+		float_t * vv = &verts[0][0];
+		float_t * pv = &prevVerts[0][0];
+		for (size_t i = 0; i < numVerts * 4; ++i) {
+			vv[i] = ((vv[i] - pv[i]) * iterT) + pv[i];
 		}
 	}
 
