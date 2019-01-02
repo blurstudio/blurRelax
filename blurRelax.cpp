@@ -57,6 +57,7 @@ SOFTWARE.
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <math.h>
 
 #define CHECKSTAT(m) if (!status) {status.perror(m); return status;};
 
@@ -72,12 +73,16 @@ SOFTWARE.
 #define GB_PIN    1
 #define GB_SLIDE  2
 
+#define SA_LAPLACIAN 0
+#define SA_TAUBIN 1
+
 #define DEFORMER_NAME "BlurRelax"
 
 // Double vs Float
 #define float_t double
 #define point_t MPoint
 #define pointArray_t MPointArray
+
 
 void edgeProject(
 	const float_t basePoints[][4],
@@ -174,8 +179,8 @@ void quickLaplacianSmooth(
 	const std::vector<std::vector<size_t>> &neighbors,
 	const std::vector<float_t> &valence,
 	const std::vector<float_t> &shiftVal,
-	const std::vector<float_t> &shiftComp,
-	const std::vector<bool> &pinPoints
+	const std::vector<bool> &pinPoints,
+	const float_t taubinBias=1.0
 ) {
 	/*
 	All the crazy hoops I've jumped through are to make auto-vectorization work
@@ -219,7 +224,7 @@ void quickLaplacianSmooth(
 	// Depending on the compiler optimization, it may be faster to break up this line
 	// Gotta test
 	for (size_t i = 0; i < nzc; ++i) {
-		outComp[i] = shiftVal[i] * (outComp[i] / valence[i]) + shiftComp[i] * verts[i];
+		outComp[i] = shiftVal[i] * taubinBias * ((outComp[i] / valence[i]) - verts[i]) + verts[i];
 	}
 
 	memcpy(verts, outComp, nzc*sizeof(float_t));
@@ -244,7 +249,7 @@ class BlurRelax : public MPxDeformerNode {
 		static MObject aHardEdgeBehavior;
 		static MObject aGroupEdgeBehavior;
 		static MObject aReproject;
-
+		static MObject aTaubinBias;
 		static MTypeId id;
 	private:
 
@@ -269,7 +274,6 @@ class BlurRelax : public MPxDeformerNode {
 			std::vector<std::vector<size_t>> &neighbors,
 			std::vector<std::vector<bool>> &hardEdges,
 			std::vector<float_t> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-			std::vector<float_t> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
 			std::vector<float_t> &valence, // as float for vectorizing
 			std::vector<bool> &pinPoints,
 			std::vector<UINT> &creaseCount,
@@ -282,6 +286,7 @@ class BlurRelax : public MPxDeformerNode {
 			const short hardEdgeBehavior,
 			const short groupEdgeBehavior,
 			const bool reproject,
+			const float taubinBias,
 			const UINT iterations,
 			const UINT numVerts,
 			const std::vector<bool> &group,
@@ -290,7 +295,6 @@ class BlurRelax : public MPxDeformerNode {
 			const std::vector<std::vector<size_t>> &neighbors,
 			const std::vector<std::vector<bool>> &hardEdges,
 			const std::vector<float_t> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-			const std::vector<float_t> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
 			const std::vector<float_t> &valence, // as float for vectorizing
 			const std::vector<bool> &pinPoints,
 			const std::vector<UINT> &creaseCount,
@@ -306,6 +310,8 @@ MObject BlurRelax::aBorderBehavior;
 MObject BlurRelax::aHardEdgeBehavior;
 MObject BlurRelax::aGroupEdgeBehavior;
 MObject BlurRelax::aReproject;
+MObject BlurRelax::aTaubinBias;
+
 
 BlurRelax::BlurRelax() {}
 BlurRelax::~BlurRelax() {}
@@ -423,6 +429,17 @@ MStatus BlurRelax::initialize() {
 	status = attributeAffects(aReproject, outputGeom);
 	CHECKSTAT("aReproject");
 
+	// Taubin Bias is divided by 1000 internally
+	aTaubinBias = nAttr.create("preserveVolume", "pv", MFnNumericData::kFloat, 1.0f, &status);
+	CHECKSTAT("aTaubinBias");
+	nAttr.setMin(0.0f);
+	nAttr.setMax(2.0f);
+	nAttr.setChannelBox(true);
+	status = addAttribute(aTaubinBias);
+	CHECKSTAT("aTaubinBias");
+	status = attributeAffects(aTaubinBias, outputGeom);
+	CHECKSTAT("aTaubinBias");
+
 	aIterations = nAttr.create("iterations", "i", MFnNumericData::kInt, 10, &status);
 	CHECKSTAT("aIterations");
 	nAttr.setMin(0);
@@ -457,6 +474,15 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		MDataHandle hReproject = dataBlock.inputValue(aReproject);
 		bool reproject = hReproject.asBool();
 
+		MDataHandle hTBias = dataBlock.inputValue(aTaubinBias);
+		float tBias = hTBias.asFloat();
+		if (tBias > 0.0)
+			iterations = (iterations % 2) ? iterations / 2 + 1 : iterations / 2;
+		// So the numbers shown are useful to the user
+		// 0 maps to 1.0 and 1 maps to -1.0
+		//tBias = -1.0f - (tBias / 100.0f);
+		tBias = -2.0 * tBias + 1.0;
+
 		// get the input mesh corresponding to this output
 		MObject thisNode = this->thisMObject();
 		MPlug inPlug(thisNode, input);
@@ -471,7 +497,6 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		std::vector<std::vector<size_t>> neighbors;
 		std::vector<std::vector<bool>> hardEdges;
 		std::vector<float_t> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
-		std::vector<float_t> shiftComp; // normally 0.5; but it's 0.75 if on a hard edge
 		std::vector<float_t> valence; // as float for vectorizing
 		std::vector<bool> pinPoints;
 		std::vector<UINT> creaseCount;
@@ -489,7 +514,7 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		// Populate the variables with *SPECIALLY ORDERED* data
 		// all vertex data is now shuffled by the order vector
 		buildQuickData(mesh, vertIter, bb, hb, gb, reproject,
-			group, order, invOrder, neighbors, hardEdges, shiftVal, shiftComp, valence,
+			group, order, invOrder, neighbors, hardEdges, shiftVal, valence,
 			pinPoints, creaseCount, verts);
 
 		// This can happen if the user is pinning all the points
@@ -500,9 +525,9 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		}
 
 		// Calculate the relax, and store in verts
-		quickRelax(mesh, bb, hb, gb, reproject,
+		quickRelax(mesh, bb, hb, gb, reproject, tBias,
 			iterations, numVerts, group, order, invOrder, neighbors, hardEdges, shiftVal,
-			shiftComp, valence, pinPoints, creaseCount, verts);
+			valence, pinPoints, creaseCount, verts);
 
 		// Get the painted weight values
 		std::vector<float> weightVals;
@@ -548,7 +573,6 @@ void BlurRelax::buildQuickData(
 	std::vector<std::vector<size_t>> &neighbors,
 	std::vector<std::vector<bool>> &hardEdges,
 	std::vector<float_t> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-	std::vector<float_t> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
 	std::vector<float_t> &valence, // as float for vectorizing
 	std::vector<bool> &pinPoints,
 	std::vector<UINT> &creaseCount,
@@ -665,11 +689,8 @@ void BlurRelax::buildQuickData(
 	// if a vert has a pinned neighbor, remove it
 
 	std::vector<float_t> rawShiftVal;
-	std::vector<float_t> rawShiftComp;
 	rawShiftVal.resize(numVertices);
-	rawShiftComp.resize(numVertices);
 	std::fill(rawShiftVal.begin(), rawShiftVal.end(), 0.5);
-	std::fill(rawShiftComp.begin(), rawShiftComp.end(), 0.5);
 
 	for (size_t i = 0; i < rawNeighbors.size(); ++i) {
 		if ((rawCreaseCount[i] != 0) || rawPinPoints[i]) {
@@ -689,7 +710,6 @@ void BlurRelax::buildQuickData(
 			rawNeighbors[i] = newNeigh;
 			rawHardEdges[i] = newHard;
 			rawShiftVal[i] = 0.25;
-			rawShiftComp[i] = 0.75;
 		}
 	}
 
@@ -709,7 +729,6 @@ void BlurRelax::buildQuickData(
 
 	valence.resize(numVertices*4);
 	shiftVal.resize(numVertices*4);
-	shiftComp.resize(numVertices*4);
 
 	invOrder.resize(order.size());
 	for (size_t i = 0; i < order.size(); ++i) {
@@ -734,7 +753,6 @@ void BlurRelax::buildQuickData(
 		for (size_t xx = 0; xx < 4; ++xx) {
 			valence[4 * i + xx] = float_t(vale);
 			shiftVal[4 * i + xx] = rawShiftVal[order[i]];
-			shiftComp[4 * i + xx] = rawShiftComp[order[i]];
 		}
 	}
 	delete [] rawVerts;
@@ -746,6 +764,7 @@ void BlurRelax::quickRelax(
 	const short hardEdgeBehavior,
 	const short groupEdgeBehavior,
 	const bool reproject,
+	const float taubinBias,
 	const UINT iterations,
 	const UINT numVerts,
 	const std::vector<bool> &group,
@@ -754,11 +773,10 @@ void BlurRelax::quickRelax(
 	const std::vector<std::vector<size_t>> &neighbors,
 	const std::vector<std::vector<bool>> &hardEdges,
 	const std::vector<float_t> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-	const std::vector<float_t> &shiftComp, // normally 0.5, but it's 0.75 if on a hard edge
 	const std::vector<float_t> &valence, // as float for vectorizing
 	const std::vector<bool> &pinPoints,
 	const std::vector<UINT> &creaseCount,
-	float_t(*verts)[4] // already resized
+	float_t(*verts)[4]
 ) {
 	bool rpEdges = (borderBehavior == BB_SLIDE) || (hardEdgeBehavior == HB_SLIDE) || (groupEdgeBehavior == GB_SLIDE);
 	std::vector<size_t> groupIdxs;
@@ -772,6 +790,14 @@ void BlurRelax::quickRelax(
 		baseVerts = new float_t[numVerts][4];
 		memcpy(&(baseVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(float_t));
 	}
+
+	float_t(*prevVerts)[4];
+	prevVerts = new float_t[numVerts][4];
+
+	float fIter, iterT, iterI;
+	iterT = modf(fIter, &iterI);
+	
+
 
 	size_t nonzeroValence = neighbors[0].size();
 
@@ -791,7 +817,12 @@ void BlurRelax::quickRelax(
 	}
 
 	for (size_t r = 0; r < iterations; ++r) {
-		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, shiftComp, pinPoints);
+		memcpy(&(prevVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(float_t));
+		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, pinPoints);
+		if (taubinBias < 1.0){
+			quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, pinPoints, taubinBias);
+		}
+
 		if (rpEdges) {
 			edgeProject(baseVerts, groupIdxs, invOrder, neighbors, hardEdges, creaseCount, verts);
 		}
@@ -812,7 +843,7 @@ void BlurRelax::quickRelax(
 		}
 	}
 
-	if (rpEdges) delete [] baseVerts;
-
+	if (rpEdges) delete[] baseVerts;
+	delete[] prevVerts;
 }
 
