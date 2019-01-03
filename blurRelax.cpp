@@ -59,6 +59,8 @@ SOFTWARE.
 #include <numeric>
 #include <math.h>
 
+#include "external/xxhash.h"
+
 #define CHECKSTAT(m) if (!status) {status.perror(m); return status;};
 
 #define BB_NONE   0
@@ -246,6 +248,25 @@ class BlurRelax : public MPxDeformerNode {
 		static MObject aTaubinBias;
 		static MTypeId id;
 	private:
+		// Hash checking variables
+		unsigned long long faceHash = 0;
+		unsigned long long edgeHash = 0;
+		unsigned long long groupHash = 0;
+		unsigned long long smoothHash = 0;
+		short bbCheck = 255;
+		short hbCheck = 255;
+		short gbCheck = 255;
+
+		// storage for this data doesn't change unless the hashes do
+		std::vector<size_t> order;
+		std::vector<size_t> invOrder;
+		std::vector<std::vector<size_t>> neighbors;
+		std::vector<std::vector<bool>> hardEdges;
+		std::vector<float_t> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
+		std::vector<float_t> valence; // as float for vectorizing
+		std::vector<bool> pinPoints;
+		std::vector<UINT> creaseCount;
+
 
 		MStatus getTrueWeights(
 				MObject &mesh,
@@ -262,20 +283,11 @@ class BlurRelax : public MPxDeformerNode {
 			short hardEdgeBehavior,
 			short groupEdgeBehavior,
 			bool reproject,
-			std::vector<bool> &group,
-			std::vector<size_t> &invOrder,
-			std::vector<size_t> &order,
-			std::vector<std::vector<size_t>> &neighbors,
-			std::vector<std::vector<bool>> &hardEdges,
-			std::vector<float_t> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-			std::vector<float_t> &valence, // as float for vectorizing
-			std::vector<bool> &pinPoints,
-			std::vector<UINT> &creaseCount,
-			float_t(*verts)[4]
+			std::vector<char> &group
 		);
 
 		void quickRelax(
-			const MObject &mesh,
+			MObject &mesh,
 			const short borderBehavior,
 			const short hardEdgeBehavior,
 			const short groupEdgeBehavior,
@@ -283,15 +295,7 @@ class BlurRelax : public MPxDeformerNode {
 			const float taubinBias,
 			const float_t iterations,
 			const UINT numVerts,
-			const std::vector<bool> &group,
-			const std::vector<size_t> &order,
-			const std::vector<size_t> &invOrder,
-			const std::vector<std::vector<size_t>> &neighbors,
-			const std::vector<std::vector<bool>> &hardEdges,
-			const std::vector<float_t> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-			const std::vector<float_t> &valence, // as float for vectorizing
-			const std::vector<bool> &pinPoints,
-			const std::vector<UINT> &creaseCount,
+			const std::vector<char> &group,
 			float_t(*verts)[4] // already resized
 		);
 };
@@ -492,44 +496,78 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		MDataHandle hInput = dataBlock.inputValue(inPlug);
 		MObject mesh = hInput.asMesh();
 
-		// Initialize the variables
-		std::vector<bool> group;
-		std::vector<size_t> order;
-		std::vector<size_t> invOrder;
-		std::vector<std::vector<size_t>> neighbors;
-		std::vector<std::vector<bool>> hardEdges;
-		std::vector<float_t> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
-		std::vector<float_t> valence; // as float for vectorizing
-		std::vector<bool> pinPoints;
-		std::vector<UINT> creaseCount;
-
 		// Get the point values
 		MFnMesh meshFn(mesh);
-		pointArray_t mpa;
-		meshFn.getPoints(mpa);
 		UINT numVerts = meshFn.numVertices();
 
-		// Build and fill the raw float data buffers
-		float_t (*verts)[4] = new float_t[numVerts][4];
-		mpa.get(verts);
+		// Get the group data
+		std::vector<char> group;
+		group.resize(numVerts);
+		for (; !vertIter.isDone(); vertIter.next()) {
+			group[vertIter.index()] = true;
+		}
+		vertIter.reset();
 
-		// Populate the variables with *SPECIALLY ORDERED* data
-		// all vertex data is now shuffled by the order vector
-		buildQuickData(mesh, vertIter, bb, hb, gb, reproject,
-			group, order, invOrder, neighbors, hardEdges, shiftVal, valence,
-			pinPoints, creaseCount, verts);
+		// Get the true smooth-edge data
+		std::vector<char> trueSmoothEdges;
+		trueSmoothEdges.resize(meshFn.numEdges());
+		MItMeshEdge edgeIter(mesh);
+		for (; !edgeIter.isDone(); edgeIter.next()) {
+			if (edgeIter.isSmooth()) {
+				trueSmoothEdges[edgeIter.index()] = true;
+			}
+		}
+		edgeIter.reset();
+
+		// Hash the topology to see if we need to re-build the data
+		// I could be smarter about this and only recompute things when needed
+		// however, those re-computations wouldn't save frames when it mattered
+		MIntArray mfaceCounts, mvertIdxs;
+		int *faceCounts, *vertIdxs;
+		meshFn.getVertices(mfaceCounts, mvertIdxs);
+		faceCounts = new int[mfaceCounts.length()];
+		vertIdxs = new int[mvertIdxs.length()];
+		unsigned long long tFaceHash = XXH64(faceCounts, mfaceCounts.length()*sizeof(int), 0);
+		unsigned long long tEdgeHash = XXH64(vertIdxs, mvertIdxs.length()*sizeof(int), 0);
+		unsigned long long tGroupHash = XXH64(group.data(), group.size()*sizeof(char), 0);
+		unsigned long long tSmoothHash = XXH64(trueSmoothEdges.data(), trueSmoothEdges.size()*sizeof(char), 0);
+		delete[] faceCounts;
+		delete[] vertIdxs;
+
+		if (
+			(bbCheck != bb) || (hbCheck != hb) || (gbCheck != gb) ||
+			(tFaceHash != faceHash) || (tEdgeHash != edgeHash) ||
+			(tGroupHash != groupHash) || (tSmoothHash != smoothHash)
+		) {
+			bbCheck = bb; hbCheck = hb; gbCheck = gb;
+			faceHash = tFaceHash; edgeHash = tEdgeHash;
+			groupHash = tGroupHash; smoothHash = tSmoothHash;
+
+			// Populate the variables with *SPECIALLY ORDERED* data
+			// all vertex data is now shuffled by the order vector
+			buildQuickData(mesh, vertIter, bb, hb, gb, reproject, group);
+		}
 
 		// This can happen if the user is pinning all the points
 		// or all the edges are hard (like when you import an obj)
 		if (neighbors.empty()) {
-			delete [] verts;
 			return status;
+		}
+		
+		// Build the raw float data buffers
+		pointArray_t mpa;
+		float_t(*reoVerts)[4] = new float_t[numVerts][4];
+		meshFn.getPoints(mpa);
+
+		for (size_t i = 0; i < numVerts; ++i) {
+			reoVerts[i][0] = mpa[order[i]].x;
+			reoVerts[i][1] = mpa[order[i]].y;
+			reoVerts[i][2] = mpa[order[i]].z;
+			reoVerts[i][3] = mpa[order[i]].w;
 		}
 
 		// Calculate the relax, and store in verts
-		quickRelax(mesh, bb, hb, gb, reproject, tBias,
-			iterations, numVerts, group, order, invOrder, neighbors, hardEdges, shiftVal,
-			valence, pinPoints, creaseCount, verts);
+		quickRelax(mesh, bb, hb, gb, reproject, tBias, iterations, numVerts, group, reoVerts);
 
 		// Get the painted weight values
 		std::vector<float> weightVals;
@@ -538,11 +576,11 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		// Finally set the output
 		for (; !vertIter.isDone(); vertIter.next()) {
 			const UINT idx = vertIter.index();
-			vertIter.setPosition((weightVals[idx]) * point_t(verts[invOrder[idx]]) + (1.0 - weightVals[idx]) * vertIter.position());
+			vertIter.setPosition((weightVals[idx]) * point_t(reoVerts[invOrder[idx]]) + (1.0 - weightVals[idx]) * vertIter.position());
 		}
 
 		// Make sure to clean up after myself
-		delete [] verts;
+		delete [] reoVerts;
 	}
 	return status;
 }
@@ -569,51 +607,29 @@ void BlurRelax::buildQuickData(
 	short hardEdgeBehavior,
 	short groupEdgeBehavior,
 	bool reproject,
-	std::vector<bool> &group,
-	std::vector<size_t> &order,
-	std::vector<size_t> &invOrder,
-	std::vector<std::vector<size_t>> &neighbors,
-	std::vector<std::vector<bool>> &hardEdges,
-	std::vector<float_t> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-	std::vector<float_t> &valence, // as float for vectorizing
-	std::vector<bool> &pinPoints,
-	std::vector<UINT> &creaseCount,
-	float_t(*verts)[4] // already resized
+	std::vector<char> &group
 ) {
 	// This takes the mesh, Gets all the required data, reorders so
 	// the verts are in descending order of valence, and gets the subgroup
 	// I'm trying to pre-process everything I can right here so I don't have to
 	// branch in quickLaplacianSmooth() so auto-vectorization works
-
 	MFnMesh meshFn(mesh);
 	UINT numVertices = meshFn.numVertices();
-	float_t(*rawVerts)[4] = new float_t[numVertices][4];
-	memcpy(&(rawVerts[0][0]), &(verts[0][0]), 4 * numVertices * sizeof(float_t));
 
-	std::vector<bool> rawPinPoints;
+	std::vector<char> rawPinPoints;
 	std::vector<UINT> rawCreaseCount;
 	rawCreaseCount.resize(numVertices);
 	rawPinPoints.resize(numVertices);
 
 	std::vector<UINT> groupBorders;
-	std::vector<bool> isGroupBorder;
+	std::vector<char> isGroupBorder;
 	isGroupBorder.resize(numVertices);
 
 	std::vector<std::vector<UINT>> rawNeighbors;
-	std::vector<std::vector<bool>> rawHardEdges;
-	std::vector<std::vector<bool>> rawPinBorders;
+	std::vector<std::vector<char>> rawHardEdges;
+	std::vector<std::vector<char>> rawPinBorders;
 	rawHardEdges.resize(numVertices);
 	rawNeighbors.resize(numVertices);
-
-	//for (auto &rh : rawHardEdges) { rh.reserve(4); }
-	//for (auto &rn : rawNeighbors) { rn.reserve(4); }
-
-	// Get the group data
-	group.resize(numVertices);
-	for (; !vertIter.isDone(); vertIter.next()) {
-		group[vertIter.index()] = true;
-	}
-	vertIter.reset();
 
 	// Get the connectivity data
 	// The big trick is that all pinning happens once, right here
@@ -700,7 +716,7 @@ void BlurRelax::buildQuickData(
 				rawPinPoints[i] = true;
 
 			std::vector<UINT> newNeigh;
-			std::vector<bool> newHard;
+			std::vector<char> newHard;
 			if (!rawPinPoints[i]) {
 				for (size_t j = 0; j < rawNeighbors[i].size(); ++j) {
 					if (rawHardEdges[i][j]) {
@@ -724,7 +740,9 @@ void BlurRelax::buildQuickData(
 
 	// Build the "transposed" neighbor and hard edge values
 	size_t maxValence = rawNeighbors[order[0]].size();
+	neighbors.clear();
 	neighbors.resize(maxValence);
+	hardEdges.clear();
 	hardEdges.resize(maxValence);
 	creaseCount.resize(numVertices);
 	pinPoints.resize(numVertices);
@@ -733,20 +751,19 @@ void BlurRelax::buildQuickData(
 	shiftVal.resize(numVertices*4);
 
 	invOrder.resize(order.size());
+
 	for (size_t i = 0; i < order.size(); ++i) {
 		invOrder[order[i]] = i;
 	}
 
 	for (size_t i = 0; i < numVertices; ++i) {
-		const std::vector<UINT> &neigh = rawNeighbors[order[i]];
-		const std::vector<bool> &hards = rawHardEdges[order[i]];
+		const auto &neigh = rawNeighbors[order[i]];
+		const auto &hards = rawHardEdges[order[i]];
 		size_t vale = neigh.size();
 		for (size_t n = 0; n < vale; ++n) {
 			neighbors[n].push_back(invOrder[neigh[n]]);
 			hardEdges[n].push_back(invOrder[hards[n]]);
 		}
-		for (size_t x = 0; x < 3; ++x)
-			verts[i][x] = rawVerts[order[i]][x];
 		creaseCount[i] = rawCreaseCount[order[i]];
 		pinPoints[i] = rawPinPoints[order[i]];
 
@@ -757,11 +774,10 @@ void BlurRelax::buildQuickData(
 			shiftVal[4 * i + xx] = rawShiftVal[order[i]];
 		}
 	}
-	delete [] rawVerts;
 }
 
 void BlurRelax::quickRelax(
-	const MObject &mesh,
+	MObject &mesh,
 	const short borderBehavior,
 	const short hardEdgeBehavior,
 	const short groupEdgeBehavior,
@@ -769,15 +785,7 @@ void BlurRelax::quickRelax(
 	const float taubinBias,
 	const float_t iterations,
 	const UINT numVerts,
-	const std::vector<bool> &group,
-	const std::vector<size_t> &order,
-	const std::vector<size_t> &invOrder,
-	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<std::vector<bool>> &hardEdges,
-	const std::vector<float_t> &shiftVal, // normally 0.5, but it's 0.25 if on a hard edge
-	const std::vector<float_t> &valence, // as float for vectorizing
-	const std::vector<bool> &pinPoints,
-	const std::vector<UINT> &creaseCount,
+	const std::vector<char> &group,
 	float_t(*verts)[4]
 ) {
 	bool rpEdges = (borderBehavior == BB_SLIDE) || (hardEdgeBehavior == HB_SLIDE) || (groupEdgeBehavior == GB_SLIDE);
@@ -806,9 +814,9 @@ void BlurRelax::quickRelax(
 	size_t nonzeroValence = neighbors[0].size();
 
 	MStatus status;
-	MFnMesh meshFn(mesh);
 	MMeshIntersector octree;
 	MObject smoothMeshPar, smoothMesh;
+	MFnMesh meshFn(mesh);
 	if (reproject) {
 		MFnMeshData smoothMeshParFn;
 		MMeshSmoothOptions smoothOpt;

@@ -9,6 +9,8 @@ set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_BINARY_DIR}/../output/Maya${MAYA_VERSIO
 
 set(SOURCE_FILES
     "blurRelax.cpp"
+    "external/xxhash.h"
+    "external/xxhash.c"
 )
 
 include_directories(${MAYA_INCLUDE_DIR})
