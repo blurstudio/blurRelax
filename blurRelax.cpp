@@ -632,10 +632,13 @@ void BlurRelax::buildQuickData(
 	rawNeighbors.resize(numVertices);
 
 	// Get the connectivity data
-	// The big trick is that all pinning happens once, right here
-	// If a vertex has no neighbors, then it is never smoothed
-	// so any vertices that are pinned just aren't given any neighbors
-	// (Meaning if A has neighbor B, then B doesn't necessarily have neighbor A)
+
+	// Instead of treating neighbors as an un-directed graph, I treat it as a directed graph
+	// This way I can remove influences from vertices, but not their neighbors
+	// So I can remove all neighbors from a vertex to pin it, but its neighbors can still use it as an influence.
+	// The big trick is that all that pinning computation only happens once, right here.
+	// And after all this junk, I only have to apply one set of very simple, very optimizable rules
+
 	MItMeshEdge edgeIter(mesh);
 	for (; !edgeIter.isDone(); edgeIter.next()) {
 		const UINT start = edgeIter.index(0);
