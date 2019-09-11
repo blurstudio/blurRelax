@@ -8,9 +8,11 @@ find_package(OpenGL REQUIRED)
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_BINARY_DIR}/../output/Maya${MAYA_VERSION})
 
 set(SOURCE_FILES
-    "blurRelax.cpp"
-    "external/xxhash.h"
-    "external/xxhash.c"
+    "src/blurRelaxNode.cpp"
+    "src/blurRelaxNode.h"
+    "src/fastRelax.cpp"
+    "src/fastRelax.h"
+    "src/pluginRegister.cpp"
 )
 
 include_directories(${MAYA_INCLUDE_DIR})

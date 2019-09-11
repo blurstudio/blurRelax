@@ -59,7 +59,6 @@ SOFTWARE.
 #include <numeric>
 #include <math.h>
 
-#include "external/xxhash.h"
 
 #define CHECKSTAT(m) if (!status) {status.perror(m); return status;};
 

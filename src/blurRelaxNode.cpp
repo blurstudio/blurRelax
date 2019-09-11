@@ -59,7 +59,6 @@ SOFTWARE.
 #include <numeric>
 #include <math.h>
 
-#include "external/xxhash.h"
 #include "blurRelax.h"
 #include "fastRelax.h"
 
