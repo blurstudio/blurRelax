@@ -73,6 +73,10 @@ MObject BlurRelax::aHardEdgeBehavior;
 MObject BlurRelax::aGroupEdgeBehavior;
 MObject BlurRelax::aReproject;
 MObject BlurRelax::aTaubinBias;
+MObject BlurRelax::aRecomputeTopo;
+MObject BlurRelax::aDeltaMush;
+MObject BlurRelax::aDeltaMult;
+MObject BlurRelax::aDeltaBase;
 
 
 BlurRelax::BlurRelax() {}
@@ -134,6 +138,7 @@ MStatus BlurRelax::initialize() {
 	MStatus status;
 	MFnEnumAttribute eAttr;
 	MFnNumericAttribute nAttr;
+	MFnTypedAttribute tAttr;
 
 	aBorderBehavior = eAttr.create("borderBehavior", "bb", BB_SLIDE, &status);
 	CHECKSTAT("aBorderBehavior");
@@ -209,6 +214,37 @@ MStatus BlurRelax::initialize() {
 	status = attributeAffects(aIterations, outputGeom);
 	CHECKSTAT("aIterations");
 
+	aRecomputeTopo = nAttr.create("recompute", "r", MFnNumericData::kBoolean, false, &status);
+	CHECKSTAT("aRecomputeTopo");
+	status = addAttribute(aRecomputeTopo);
+	CHECKSTAT("aRecomputeTopo");
+	status = attributeAffects(aRecomputeTopo, outputGeom);
+	CHECKSTAT("aRecomputeTopo");
+
+	aDeltaMush = nAttr.create("delta", "d", MFnNumericData::kBoolean, false, &status);
+	CHECKSTAT("aDeltaMush");
+	status = addAttribute(aDeltaMush);
+	CHECKSTAT("aDeltaMush");
+	status = attributeAffects(aDeltaMush, outputGeom);
+	CHECKSTAT("aDeltaMush");
+
+	aDeltaMult = nAttr.create("deltaMultiplier", "dm", MFnNumericData::kFloat, 1.0f, &status);
+	CHECKSTAT("aDeltaMult");
+	nAttr.setChannelBox(true);
+	status = addAttribute(aDeltaMult);
+	CHECKSTAT("aDeltaMult");
+	status = attributeAffects(aDeltaMult, outputGeom);
+	CHECKSTAT("aDeltaMult");
+
+	aDeltaBase = tAttr.create("deltaBase", "db", MFnData::kMesh);
+	tAttr.setArray(true);
+	CHECKSTAT("aDeltaBase");
+	status = addAttribute(aDeltaBase);
+	CHECKSTAT("aDeltaBase");
+	status = attributeAffects(aDeltaBase, outputGeom);
+	CHECKSTAT("aDeltaBase");
+
+
 	MGlobal::executeCommand("makePaintable -attrType \"multiFloat\" -sm \"deformer\" \"" DEFORMER_NAME "\" \"weights\";");
 
 	return MStatus::kSuccess;
@@ -233,6 +269,8 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		short gb = hGroupEdge.asShort();
 		MDataHandle hReproject = dataBlock.inputValue(aReproject);
 		bool reproject = hReproject.asBool();
+		MDataHandle hRecompute = dataBlock.inputValue(aRecomputeTopo);
+		bool recompute = hRecompute.asBool();
 
 		MDataHandle hTBias = dataBlock.inputValue(aTaubinBias);
 		float tBias = hTBias.asFloat();
@@ -260,71 +298,28 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 
 		// Get the point values
 		MFnMesh meshFn(mesh);
-		UINT numVerts = meshFn.numVertices();
+		int tNumVerts = meshFn.numVertices();
+		int tNumPolys = meshFn.numPolygons();
+		int tNumEdges = meshFn.numEdges();
 
-		// Get the group data
-		std::vector<char> group;
-		group.resize(numVerts);
-		for (; !vertIter.isDone(); vertIter.next()) {
-			group[vertIter.index()] = true;
-		}
-		vertIter.reset();
-
-		// Get the true smooth-edge data
-		std::vector<char> trueSmoothEdges;
-		trueSmoothEdges.resize(meshFn.numEdges());
-		MItMeshEdge edgeIter(mesh);
-		for (; !edgeIter.isDone(); edgeIter.next()) {
-			if (edgeIter.isSmooth()) {
-				trueSmoothEdges[edgeIter.index()] = true;
-			}
-		}
-		edgeIter.reset();
-
-		// Hash the topology to see if we need to re-build the data
-		// I could be smarter about this and only recompute things when needed
-		// however, those re-computations wouldn't save frames when it mattered
-		MIntArray mfaceCounts, mvertIdxs;
-		int *faceCounts, *vertIdxs;
-		meshFn.getVertices(mfaceCounts, mvertIdxs);
-		faceCounts = new int[mfaceCounts.length()];
-		vertIdxs = new int[mvertIdxs.length()];
-		/*
-		unsigned long long tFaceHash = XXH64(faceCounts, mfaceCounts.length()*sizeof(int), 0);
-		unsigned long long tEdgeHash = XXH64(vertIdxs, mvertIdxs.length()*sizeof(int), 0);
-		unsigned long long tGroupHash = XXH64(group.data(), group.size()*sizeof(char), 0);
-		unsigned long long tSmoothHash = XXH64(trueSmoothEdges.data(), trueSmoothEdges.size()*sizeof(char), 0);
-		*/
-		bool forceRecompute = false;
-		unsigned tFaceHash =  mfaceCounts.length();
-		unsigned tEdgeHash =  mvertIdxs.length();
-		unsigned tGroupHash =  group.size();
-		unsigned tSmoothHash =  trueSmoothEdges.size();
-
-		delete[] faceCounts;
-		delete[] vertIdxs;
-
-		if (forceRecompute ||
+		if (recompute ||
 			(bbCheck != bb) || (hbCheck != hb) || (gbCheck != gb) ||
-			(tFaceHash != faceHash) || (tEdgeHash != edgeHash) ||
-			(tGroupHash != groupHash) || (tSmoothHash != smoothHash)
+			(tNumVerts != hNumVerts) || (tNumPolys != hNumPolys) || (tNumEdges != hNumEdges)
 		) {
 			bbCheck = bb; hbCheck = hb; gbCheck = gb;
-			faceHash = tFaceHash; edgeHash = tEdgeHash;
-			groupHash = tGroupHash; smoothHash = tSmoothHash;
-
+			hNumVerts = tNumVerts; hNumPolys = tNumPolys; hNumEdges = tNumEdges;
 			// Populate the variables with *SPECIALLY ORDERED* data
 			// all vertex data is now shuffled by the order vector
 
-			//std::vector<std::vector<UINT>> &neighbors, // A vector of neighbor indices per vertex
-			//std::vector<std::vector<char>> &hardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
-			//std::vector<char> &vertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+			std::vector<std::vector<UINT>> rawNeighbors; // A vector of neighbor indices per vertex
+			std::vector<std::vector<char>> rawHardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
+			std::vector<char> rawVertData; // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+
 			loadMayaTopologyData(mesh, vertIter, rawNeighbors, rawHardEdges, rawVertData);
 			fillQuickTopoVars(
 				bb, hb, gb, rawNeighbors, rawHardEdges, rawVertData,
 				neighbors, creaseCount, shiftVal, valence, order, invOrder
 			);
-
 		}
 
 		// This can happen if the user is pinning all the points
@@ -332,7 +327,7 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		if (neighbors.empty()) {
 			return status;
 		}
-		
+
 		// Build the raw float data buffers
 		pointArray_t mpa;
 		float_t(*reoVerts)[4] = new float_t[numVerts][4];
@@ -421,9 +416,9 @@ void BlurRelax::quickRelax(
 			// Store the next-to-last iteration to interpolate with
 			memcpy(&(prevVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(float_t));
 		}
-		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, pinPoints);
+		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal);
 		if (taubinBias < 1.0){
-			quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, pinPoints, taubinBias);
+			quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, taubinBias);
 		}
 
 		if (rpEdges) {

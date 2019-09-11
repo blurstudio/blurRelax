@@ -124,13 +124,16 @@ class BlurRelax : public MPxDeformerNode {
 		static MObject aGroupEdgeBehavior;
 		static MObject aReproject;
 		static MObject aTaubinBias;
+		static MObject aRecomputeTopo;
+		static MObject aDeltaMush;
+		static MObject aDeltaMult;
+		static MObject aDeltaBase;
 		static MTypeId id;
 	private:
 		// Hash checking variables
-		unsigned long long faceHash = 0;
-		unsigned long long edgeHash = 0;
-		unsigned long long groupHash = 0;
-		unsigned long long smoothHash = 0;
+		int hNumVerts = 0;
+		int hNumPolys = 0;
+		int hNumEdges = 0;
 		short bbCheck = 255;
 		short hbCheck = 255;
 		short gbCheck = 255;
@@ -138,13 +141,14 @@ class BlurRelax : public MPxDeformerNode {
 		// storage for this data doesn't change unless the hashes do
 		std::vector<size_t> order;
 		std::vector<size_t> invOrder;
-		std::vector<std::vector<size_t>> neighbors;
-		std::vector<std::vector<bool>> hardEdges;
+
+
+		std::vector<std::vector<UINT>> &neighbors, // A vector of neighbor indices per vertex
+		std::vector<std::vector<char>> &hardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
+		std::vector<char> &vertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
 		std::vector<float_t> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
 		std::vector<float_t> valence; // as float for vectorizing
-		std::vector<bool> pinPoints;
 		std::vector<UINT> creaseCount;
-
 
 		MStatus getTrueWeights(
 				MObject &mesh,
