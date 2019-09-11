@@ -40,6 +40,7 @@ SOFTWARE.
 #include <maya/MFnPlugin.h>
 #include <maya/MFnEnumAttribute.h>
 #include <maya/MFnNumericAttribute.h>
+#include <maya/MFnTypedAttribute.h>
 
 #include <maya/MPoint.h>
 #include <maya/MFloatPoint.h>
@@ -59,7 +60,7 @@ SOFTWARE.
 #include <numeric>
 #include <math.h>
 
-#include "blurRelax.h"
+#include "blurRelaxNode.h"
 #include "fastRelax.h"
 
 

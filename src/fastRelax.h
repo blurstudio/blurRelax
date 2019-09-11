@@ -72,7 +72,7 @@ void fillQuickTopoVars(
 	// Inputs
 	std::vector<std::vector<UINT>> rawNeighbors, // A vector of neighbor indices per vertex. Copied
 	std::vector<std::vector<char>> rawHardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary. Copied
-	const std::vector<char> &rawVertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+	const std::vector<char> &rawVertData, // Bitwise per-vert data: Group membership, geo boundary, group boundary,
 
 	// Outputs
 	std::vector<std::vector<size_t>> &neighbors,

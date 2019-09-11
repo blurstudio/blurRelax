@@ -27,6 +27,7 @@ SOFTWARE.
 #include <numeric>
 #include <math.h>
 #include "fastRelax.h"
+#include "blurRelaxNode.h"
 
 /*
 	This code takes the edges that have been defined as hard
@@ -35,6 +36,8 @@ SOFTWARE.
 	Perhaps in the future, I can project onto non-branching
 	strings of edges. But for now, it's just direct neighbors
 */
+
+
 void edgeProject(
 	const float_t basePoints[][4],
 	const std::vector<size_t> &group,
@@ -181,7 +184,7 @@ void fillQuickTopoVars(
 	// Inputs
 	std::vector<std::vector<UINT>> rawNeighbors, // A vector of neighbor indices per vertex. Copied
 	std::vector<std::vector<char>> rawHardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary. Copied
-	const std::vector<char> &rawVertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+	const std::vector<char> &rawVertData, // Bitwise per-vert data: Group membership, geo boundary, group boundary,
 
 	// Outputs
 	std::vector<std::vector<size_t>> &neighbors,
@@ -201,7 +204,7 @@ void fillQuickTopoVars(
 	for (size_t start=0; start<rawNeighbors.size(); ++start){
 		const char startData = rawVertData[start];
 		if (!(startData & V_IN_GROUP)) continue; // short circuit if the start isn't in the group
-		for (size_t j=0; j<rawNeighbors[start]; ++j){
+		for (size_t j=0; j<rawNeighbors[start].size(); ++j){
 			const UINT end = rawNeighbors[start][j];
 			const char endData = rawVertData[end];
 			if (endData & V_IN_GROUP){ // start and end are both in group
@@ -326,11 +329,9 @@ void loadMayaTopologyData(
 		}
 		if (!edgeIter.isSmooth()) edgeData |= E_HARD;
 
-		rawNeighbors[start].push_back(end);
-		rawNeighbors[end].push_back(start);
+		neighbors[start].push_back(end);
+		neighbors[end].push_back(start);
 
-		hardEdges[start].push_back(edgeData);
-		hardEdges[end].push_back(edgeData);
 
 		if (vertData[start] & V_IN_GROUP) {
 			if (!(vertData[end] & V_IN_GROUP)) vertData[start] |= V_GROUP_BORDER;
@@ -345,19 +346,20 @@ void loadMayaTopologyData(
 		edgeIter.getConnectedFaces(connFaces);
 		for (UINT i=0; i<connFaces.length(); ++i){
 			MIntArray polyVerts;
-			meshFn.getPolyginVertices(connFaces[i], polyVerts);
+			meshFn.getPolygonVertices(connFaces[i], polyVerts);
 			for (UINT j=0; j<polyVerts.length(); ++j){
 				if (!(vertData[polyVerts[i]] & V_IN_GROUP)){
 					internalEdge = false;
+					edgeData |= E_GROUP_BORDER;
 					break;
 				}
 			}
 			if (!internalEdge) break;
 		}
-		if (!internalEdge){
-			hardEdges[start] |= E_GROUP_BORDER;
-			hardEdges[end] |= E_GROUP_BORDER;
-		}
+
+		hardEdges[start].push_back(edgeData);
+		hardEdges[end].push_back(edgeData);
+
 	}
 }
 
