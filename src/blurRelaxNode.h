@@ -22,87 +22,24 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include <maya/MTypeId.h> 
-#include <maya/MPlug.h>
-#include <maya/MDataBlock.h>
-#include <maya/MDataHandle.h>
-#include <maya/MArrayDataHandle.h>
-#include <maya/MGlobal.h>
-#include <maya/MTypes.h>
-
-#include <maya/MMeshIntersector.h>
-#include <maya/MPointArray.h>
-#include <maya/MFloatPointArray.h>
-
-#include <maya/MItGeometry.h>
+#pragma once
 #include <maya/MPxDeformerNode.h> 
-
-#include <maya/MFnPlugin.h>
-#include <maya/MFnEnumAttribute.h>
-#include <maya/MFnNumericAttribute.h>
-
-#include <maya/MPoint.h>
-#include <maya/MFloatPoint.h>
-#include <maya/MFloatPointArray.h>
-#include <maya/MVector.h>
-#include <maya/MMatrix.h>
-#include <maya/MFnMesh.h>
-#include <maya/MFnMeshData.h>
-#include <maya/MObject.h>
-#include <maya/MMeshSmoothOptions.h>
-#include <maya/MItMeshedge.h>
-
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
-#include <algorithm>
-#include <numeric>
-#include <math.h>
-
-
-#define CHECKSTAT(m) if (!status) {status.perror(m); return status;};
-
-#define BB_NONE   0
-#define BB_PIN    1
-#define BB_SLIDE  2
-
-#define HB_NONE   0
-#define HB_PIN    1
-#define HB_SLIDE  2
-
-#define GB_NONE   0
-#define GB_PIN    1
-#define GB_SLIDE  2
-
-#define SA_LAPLACIAN 0
-#define SA_TAUBIN 1
+#include "fastRelax.h"
 
 #define DEFORMER_NAME "BlurRelax"
+#define CHECKSTAT(m) if (!status) {status.perror(m); return status;};
 
 // Double vs Float
-#define float_t double
-#define point_t MPoint
-#define pointArray_t MPointArray
+typedef MPoint point_t;
+typedef MPointArray pointArray_t;
 
-
-void edgeProject(
-	const float_t basePoints[][4],
-	const std::vector<size_t> &group,
-	const std::vector<size_t> &invOrder,
-	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<std::vector<bool>> &hardEdges,
-	const std::vector<UINT> &creaseCount,
-	float_t smoothPoints[][4]
-);
-
-void quickLaplacianSmooth(
-	float_t verts2d[][4],
-	const size_t numVerts,
-	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<float_t> &valence,
-	const std::vector<float_t> &shiftVal,
-	const std::vector<bool> &pinPoints,
-	const float_t taubinBias=1.0
+void loadMayaTopologyData(
+	MObject &mesh,
+	MItGeometry& vertIter,
+	std::vector<std::vector<size_t>> &neighbors, // A vector of neighbor indices per vertex
+	std::vector<std::vector<char>> &hardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
+	std::vector<char> &vertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
 );
 
 class BlurRelax : public MPxDeformerNode {
@@ -140,11 +77,11 @@ class BlurRelax : public MPxDeformerNode {
 		// storage for this data doesn't change unless the hashes do
 		std::vector<size_t> order;
 		std::vector<size_t> invOrder;
-		std::vector<std::vector<UINT>> neighbors; // A vector of neighbor indices per vertex
+		std::vector<std::vector<size_t>> neighbors; // A vector of neighbor indices per vertex
 		std::vector<std::vector<char>> hardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
 		std::vector<char> vertData; // Bitwise per-vert data: Group membership, geo boundary, group boundary,
-		std::vector<float_t> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
-		std::vector<float_t> valence; // as float for vectorizing
+		std::vector<FLOAT> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
+		std::vector<FLOAT> valence; // as float for vectorizing
 		std::vector<UINT> creaseCount;
 
 		MStatus getTrueWeights(
@@ -155,16 +92,6 @@ class BlurRelax : public MPxDeformerNode {
 				float envelope
 				) const;
 
-		void BlurRelax::buildQuickData(
-			MObject &mesh,
-			MItGeometry& vertIter,
-			short borderBehavior,
-			short hardEdgeBehavior,
-			short groupEdgeBehavior,
-			bool reproject,
-			std::vector<char> &group
-		);
-
 		void quickRelax(
 			MObject &mesh,
 			const short borderBehavior,
@@ -172,10 +99,10 @@ class BlurRelax : public MPxDeformerNode {
 			const short groupEdgeBehavior,
 			const bool reproject,
 			const float taubinBias,
-			const float_t iterations,
+			const FLOAT iterations,
 			const UINT numVerts,
 			const std::vector<char> &group,
-			float_t(*verts)[4] // already resized
+			FLOAT(*verts)[4] // already resized
 		);
 };
 

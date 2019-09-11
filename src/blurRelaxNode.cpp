@@ -23,42 +23,27 @@ SOFTWARE.
 */
 
 #include <maya/MTypeId.h> 
-#include <maya/MPlug.h>
 #include <maya/MDataBlock.h>
 #include <maya/MDataHandle.h>
 #include <maya/MArrayDataHandle.h>
 #include <maya/MGlobal.h>
-#include <maya/MTypes.h>
 
 #include <maya/MMeshIntersector.h>
-#include <maya/MPointArray.h>
-#include <maya/MFloatPointArray.h>
 
+#include <maya/MItMeshedge.h>
 #include <maya/MItGeometry.h>
 #include <maya/MPxDeformerNode.h> 
 
-#include <maya/MFnPlugin.h>
 #include <maya/MFnEnumAttribute.h>
 #include <maya/MFnNumericAttribute.h>
 #include <maya/MFnTypedAttribute.h>
+#include <maya/MFnMesh.h>
+#include <maya/MFnMeshData.h>
 
 #include <maya/MPoint.h>
 #include <maya/MFloatPoint.h>
+#include <maya/MPointArray.h>
 #include <maya/MFloatPointArray.h>
-#include <maya/MVector.h>
-#include <maya/MMatrix.h>
-#include <maya/MFnMesh.h>
-#include <maya/MFnMeshData.h>
-#include <maya/MObject.h>
-#include <maya/MMeshSmoothOptions.h>
-#include <maya/MItMeshedge.h>
-
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
-#include <algorithm>
-#include <numeric>
-#include <math.h>
 
 #include "blurRelaxNode.h"
 #include "fastRelax.h"
@@ -311,7 +296,7 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 			// Populate the variables with *SPECIALLY ORDERED* data
 			// all vertex data is now shuffled by the order vector
 
-			std::vector<std::vector<UINT>> rawNeighbors; // A vector of neighbor indices per vertex
+			std::vector<std::vector<size_t>> rawNeighbors; // A vector of neighbor indices per vertex
 			std::vector<std::vector<char>> rawHardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
 			std::vector<char> rawVertData; // Bitwise per-vert data: Group membership, geo boundary, group boundary,
 
@@ -330,18 +315,18 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 
 		// Build the raw float data buffers
 		pointArray_t mpa;
-		float_t(*reoVerts)[4] = new float_t[numVerts][4];
+		FLOAT(*reoVerts)[4] = new FLOAT[tNumVerts][4];
 		meshFn.getPoints(mpa);
 
-		for (size_t i = 0; i < numVerts; ++i) {
-			reoVerts[i][0] = mpa[order[i]].x;
-			reoVerts[i][1] = mpa[order[i]].y;
-			reoVerts[i][2] = mpa[order[i]].z;
-			reoVerts[i][3] = mpa[order[i]].w;
+		for (size_t i = 0; i < tNumVerts; ++i) {
+			reoVerts[i][0] = mpa[(UINT)order[i]].x;
+			reoVerts[i][1] = mpa[(UINT)order[i]].y;
+			reoVerts[i][2] = mpa[(UINT)order[i]].z;
+			reoVerts[i][3] = mpa[(UINT)order[i]].w;
 		}
 
 		// Calculate the relax, and store in verts
-		quickRelax(mesh, bb, hb, gb, reproject, tBias, iterations, numVerts, group, reoVerts);
+		quickRelax(mesh, bb, hb, gb, reproject, tBias, iterations, tNumVerts, vertData, reoVerts);
 
 		// Get the painted weight values
 		std::vector<float> weightVals;
@@ -366,28 +351,28 @@ void BlurRelax::quickRelax(
 	const short groupEdgeBehavior,
 	const bool reproject,
 	const float taubinBias,
-	const float_t iterations,
+	const FLOAT iterations,
 	const UINT numVerts,
 	const std::vector<char> &group,
-	float_t(*verts)[4]
+	FLOAT(*verts)[4]
 ) {
 	bool rpEdges = (borderBehavior == BB_SLIDE) || (hardEdgeBehavior == HB_SLIDE) || (groupEdgeBehavior == GB_SLIDE);
 	std::vector<size_t> groupIdxs;
 
-	float_t (*baseVerts)[4];
+	FLOAT (*baseVerts)[4];
 	if (rpEdges) {
 		for (size_t i = 0; i < group.size(); ++i) {
 			if (group[i]) groupIdxs.push_back(i);
 		}
 		// make a copy of the original verts only if they'll be used for edge reprojection
-		baseVerts = new float_t[numVerts][4];
-		memcpy(&(baseVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(float_t));
+		baseVerts = new FLOAT[numVerts][4];
+		memcpy(&(baseVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(FLOAT));
 	}
 
-	float_t(*prevVerts)[4];
-	prevVerts = new float_t[numVerts][4];
+	FLOAT(*prevVerts)[4];
+	prevVerts = new FLOAT[numVerts][4];
 
-	float_t iterT, iterFI;
+	FLOAT iterT, iterFI;
 	iterT = modf(iterations, &iterFI);
 	UINT iterI = (UINT)iterFI;
 	if (iterT > 0.0) {
@@ -414,7 +399,7 @@ void BlurRelax::quickRelax(
 	for (size_t r = 0; r < iterI; ++r) {
 		if ((r == iterI - 1) && (iterT > 0.0)){
 			// Store the next-to-last iteration to interpolate with
-			memcpy(&(prevVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(float_t));
+			memcpy(&(prevVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(FLOAT));
 		}
 		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal);
 		if (taubinBias < 1.0){
@@ -422,7 +407,7 @@ void BlurRelax::quickRelax(
 		}
 
 		if (rpEdges) {
-			edgeProject(baseVerts, groupIdxs, invOrder, neighbors, hardEdges, creaseCount, verts);
+			edgeProject(baseVerts, groupIdxs, invOrder, neighbors, creaseCount, verts);
 		}
 
 		if (reproject) {
@@ -445,8 +430,8 @@ void BlurRelax::quickRelax(
 	// Interpolate between prevVerts and verts based on iterT
 	if (iterT > 0.0) {
 		// This should vectorize
-		float_t * vv = &verts[0][0];
-		float_t * pv = &prevVerts[0][0];
+		FLOAT * vv = &verts[0][0];
+		FLOAT * pv = &prevVerts[0][0];
 		for (size_t i = 0; i < numVerts * 4; ++i) {
 			vv[i] = ((vv[i] - pv[i]) * iterT) + pv[i];
 		}
@@ -455,4 +440,80 @@ void BlurRelax::quickRelax(
 	if (rpEdges) delete[] baseVerts;
 	delete[] prevVerts;
 }
+
+
+
+
+/*
+   Load the minimal topology data from Maya
+*/
+void loadMayaTopologyData(
+	// Inputs
+	MObject &mesh,
+	MItGeometry& vertIter,
+
+	//outputs
+	std::vector<std::vector<size_t>> &neighbors, // A vector of neighbor indices per vertex
+	std::vector<std::vector<char>> &hardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
+	std::vector<char> &vertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+){
+	MFnMesh meshFn(mesh);
+	UINT numVertices = meshFn.numVertices();
+	vertData.resize(numVertices);
+	hardEdges.resize(numVertices);
+	neighbors.resize(numVertices);
+
+	for (; !vertIter.isDone(); vertIter.next()) {
+		vertData[vertIter.index()] = V_IN_GROUP;
+	}
+	vertIter.reset();
+
+	MItMeshEdge edgeIter(mesh);
+	for (; !edgeIter.isDone(); edgeIter.next()) {
+		const UINT start = edgeIter.index(0);
+		const UINT end = edgeIter.index(1);
+
+		char edgeData;
+		if (edgeIter.onBoundary()) {
+			edgeData |= E_MESH_BORDER;
+			vertData[start] |= V_MESH_BORDER;
+			vertData[end] |= V_MESH_BORDER;
+		}
+		if (!edgeIter.isSmooth()) edgeData |= E_HARD;
+
+		neighbors[start].push_back(end);
+		neighbors[end].push_back(start);
+
+
+		if (vertData[start] & V_IN_GROUP) {
+			if (!(vertData[end] & V_IN_GROUP)) vertData[start] |= V_GROUP_BORDER;
+		}
+		else if (vertData[end] & V_IN_GROUP) vertData[end] |= V_GROUP_BORDER;
+
+		// an edge is a group border edge iff 
+		// one of the two faces bordering this edge
+		// has a vertex that is not in the group
+		bool internalEdge = true;
+		MIntArray connFaces;
+		edgeIter.getConnectedFaces(connFaces);
+		for (UINT i=0; i<connFaces.length(); ++i){
+			MIntArray polyVerts;
+			meshFn.getPolygonVertices(connFaces[i], polyVerts);
+			for (UINT j=0; j<polyVerts.length(); ++j){
+				if (!(vertData[polyVerts[i]] & V_IN_GROUP)){
+					internalEdge = false;
+					edgeData |= E_GROUP_BORDER;
+					break;
+				}
+			}
+			if (!internalEdge) break;
+		}
+
+		hardEdges[start].push_back(edgeData);
+		hardEdges[end].push_back(edgeData);
+
+	}
+}
+
+
 

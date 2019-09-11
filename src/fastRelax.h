@@ -23,9 +23,12 @@ SOFTWARE.
 */
 #pragma once
 #include <vector>
-#include <algorithm>
-#include <numeric>
 
+typedef double FLOAT;
+typedef unsigned int UINT;
+#define NUM_COMPS 4
+
+// Yes, these should be enums. I'll get to it
 #define V_IN_GROUP 1
 #define V_MESH_BORDER 2
 #define V_GROUP_BORDER 4
@@ -34,33 +37,38 @@ SOFTWARE.
 #define E_MESH_BORDER 2
 #define E_GROUP_BORDER 4
 
-#define NUM_COMPS 4
+#define BB_NONE   0
+#define BB_PIN    1
+#define BB_SLIDE  2
+
+#define HB_NONE   0
+#define HB_PIN    1
+#define HB_SLIDE  2
+
+#define GB_NONE   0
+#define GB_PIN    1
+#define GB_SLIDE  2
+
+#define SA_LAPLACIAN 0
+#define SA_TAUBIN 1
 
 
 void edgeProject(
-	const float_t basePoints[][NUM_COMPS],
+	const FLOAT basePoints[][NUM_COMPS],
 	const std::vector<size_t> &group,
 	const std::vector<size_t> &invOrder,
 	const std::vector<std::vector<size_t>> &neighbors,
 	const std::vector<UINT> &creaseCount,
-	float_t smoothPoints[][NUM_COMPS]
+	FLOAT smoothPoints[][NUM_COMPS]
 );
 
 void quickLaplacianSmooth(
-	float_t verts2d[][NUM_COMPS],
+	FLOAT verts2d[][NUM_COMPS],
 	const size_t numVerts,
 	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<float_t> &valence,
-	const std::vector<float_t> &shiftVal,
-	const float_t taubinBias=1.0
-);
-
-void loadMayaTopologyData(
-	MObject &mesh,
-	MItGeometry& vertIter,
-	std::vector<std::vector<UINT>> &neighbors, // A vector of neighbor indices per vertex
-	std::vector<std::vector<char>> &hardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
-	std::vector<char> &vertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+	const std::vector<FLOAT> &valence,
+	const std::vector<FLOAT> &shiftVal,
+	const FLOAT taubinBias=1.0
 );
 
 void fillQuickTopoVars(
@@ -70,15 +78,15 @@ void fillQuickTopoVars(
 	short groupEdgeBehavior, // GB_NONE/GB_PIN/GB_SLIDE
 
 	// Inputs
-	std::vector<std::vector<UINT>> rawNeighbors, // A vector of neighbor indices per vertex. Copied
+	std::vector<std::vector<size_t>> rawNeighbors, // A vector of neighbor indices per vertex. Copied
 	std::vector<std::vector<char>> rawHardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary. Copied
 	const std::vector<char> &rawVertData, // Bitwise per-vert data: Group membership, geo boundary, group boundary,
 
 	// Outputs
 	std::vector<std::vector<size_t>> &neighbors,
 	std::vector<UINT> &creaseCount,
-	std::vector<float_t> &shiftVal,
-	std::vector<float_t> &valence,
+	std::vector<FLOAT> &shiftVal,
+	std::vector<FLOAT> &valence,
 	std::vector<size_t> &order,
 	std::vector<size_t> &invOrder
 );

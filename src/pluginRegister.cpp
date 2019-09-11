@@ -23,7 +23,7 @@ SOFTWARE.
 */
 
 #include <maya/MFnPlugin.h>
-#include "blurRelax.h"
+#include "blurRelaxNode.h"
 
 MStatus initializePlugin(MObject obj) {
 	MStatus result;

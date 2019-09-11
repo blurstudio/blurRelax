@@ -25,9 +25,7 @@ SOFTWARE.
 #include <vector>
 #include <algorithm>
 #include <numeric>
-#include <math.h>
 #include "fastRelax.h"
-#include "blurRelaxNode.h"
 
 /*
 	This code takes the edges that have been defined as hard
@@ -39,12 +37,12 @@ SOFTWARE.
 
 
 void edgeProject(
-	const float_t basePoints[][4],
+	const FLOAT basePoints[][NUM_COMPS],
 	const std::vector<size_t> &group,
 	const std::vector<size_t> &invOrder,
 	const std::vector<std::vector<size_t>> &neighbors,
 	const std::vector<UINT> &creaseCount,
-	float_t smoothPoints[][4]
+	FLOAT smoothPoints[][NUM_COMPS]
 ) {
 	std::vector<size_t> neigh;
 	for (size_t gidx = 0; gidx < group.size(); ++gidx) {
@@ -54,10 +52,10 @@ void edgeProject(
 		// assume that all stored neighbors are hard.
 		size_t idx = invOrder[group[gidx]];
 
-		float_t *avg = smoothPoints[idx];
-		const float_t *basePos = basePoints[idx];
+		FLOAT *avg = smoothPoints[idx];
+		const FLOAT *basePos = basePoints[idx];
 		if (creaseCount[idx] != 2) { continue; }
-		float_t keep[3], delta[3], edge[3];
+		FLOAT keep[3], delta[3], edge[3];
 
 		neigh.clear();
 		for (size_t i = 0; i < neighbors.size(); ++i) {
@@ -68,7 +66,7 @@ void edgeProject(
 		}
 
 		// TODO: Find the hard edge strings and reproject onto those
-		float_t minLen = std::numeric_limits<float_t>::max();
+		FLOAT minLen = std::numeric_limits<FLOAT>::max();
 		bool found = false;
 
 		// avg - basePos
@@ -81,26 +79,26 @@ void edgeProject(
 			// normalized(prevPoints[n] - basePos)
 			for (size_t x = 0; x < 3; ++x)
 				edge[x] = basePoints[n][x] - basePos[x];
-			float_t elen = sqrt(edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2]);
+			FLOAT elen = sqrt(edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2]);
 			for (size_t x = 0; x < 3; ++x)
 				edge[x] /= elen;
 
 			// dot(delta, edge)
-			float_t dd = delta[0] * edge[0] + delta[1] * edge[1] + delta[2] * edge[2];
+			FLOAT dd = delta[0] * edge[0] + delta[1] * edge[1] + delta[2] * edge[2];
 
-			float_t dn[3] = { 0.0f, 0.0f, 0.0f };
+			FLOAT dn[3] = { 0.0f, 0.0f, 0.0f };
 			if (dd > 0.0) {
 				for (size_t x = 0; x < 3; ++x)
 					dn[x] = edge[x] * dd;
 			}
-			float_t xx[3];
+			FLOAT xx[3];
 
 			// delta - dn
 			for (size_t x = 0; x < 3; ++x)
 				xx[x] = delta[x] - dn[x];
 
 			// dot(xx, xx)
-			float_t len2 = xx[0] * xx[0] + xx[1] * xx[1] + xx[2] * xx[2];
+			FLOAT len2 = xx[0] * xx[0] + xx[1] * xx[1] + xx[2] * xx[2];
 
 			if (len2 < minLen) {
 				minLen = len2;
@@ -128,16 +126,17 @@ void edgeProject(
 	with the most neighbors were at the top.
 	neighborOffsets contains the index offsets of vertices with at least [index] of neighbors
 */
+
 void quickLaplacianSmooth(
-	float_t verts2d[][4],
+	FLOAT verts2d[][NUM_COMPS],
 	const size_t numVerts,
 	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<float_t> &valence,
-	const std::vector<float_t> &shiftVal,
-	const float_t taubinBias=1.0
+	const std::vector<FLOAT> &valence,
+	const std::vector<FLOAT> &shiftVal,
+	const FLOAT taubinBias
 ) {
 	// First, get verts as a single pointer to the contiguous memory stored in (verts2d*)[4]
-	float_t* verts = &(verts2d[0][0]);
+	FLOAT* verts = &(verts2d[0][0]);
 
 	// number of nonzero valence
 	size_t nzv = neighbors[0].size();
@@ -148,8 +147,8 @@ void quickLaplacianSmooth(
 	// The __restrict keyword tells the compiler that *outComp
 	// is not pointed to by any other pointer in this scope
 	// This allows for auto-vectorization
-	float_t * __restrict outComp = new float_t[nzc];
-	memset(outComp, 0, nzc*sizeof(float_t));
+	FLOAT * __restrict outComp = new FLOAT[nzc];
+	memset(outComp, 0, nzc*sizeof(FLOAT));
 
 	for (size_t ncIdx = 0; ncIdx < neighbors.size(); ++ncIdx) {
 		const auto &nCol = neighbors[ncIdx];
@@ -166,7 +165,7 @@ void quickLaplacianSmooth(
 		outComp[i] = shiftVal[i] * taubinBias * ((outComp[i] / valence[i]) - verts[i]) + verts[i];
 	}
 
-	memcpy(verts, outComp, nzc*sizeof(float_t));
+	memcpy(verts, outComp, nzc*sizeof(FLOAT));
 	delete outComp;
 }
 
@@ -182,15 +181,15 @@ void fillQuickTopoVars(
 	short groupEdgeBehavior, // GB_NONE/GB_PIN/GB_SLIDE
 
 	// Inputs
-	std::vector<std::vector<UINT>> rawNeighbors, // A vector of neighbor indices per vertex. Copied
+	std::vector<std::vector<size_t>> rawNeighbors, // A vector of neighbor indices per vertex. Copied
 	std::vector<std::vector<char>> rawHardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary. Copied
 	const std::vector<char> &rawVertData, // Bitwise per-vert data: Group membership, geo boundary, group boundary,
 
 	// Outputs
 	std::vector<std::vector<size_t>> &neighbors,
 	std::vector<UINT> &creaseCount,
-	std::vector<float_t> &shiftVal,
-	std::vector<float_t> &valence,
+	std::vector<FLOAT> &shiftVal,
+	std::vector<FLOAT> &valence,
 	std::vector<size_t> &order,
 	std::vector<size_t> &invOrder
 ){
@@ -228,7 +227,7 @@ void fillQuickTopoVars(
 		}
 	}
 
-	std::vector<float_t> rawShiftVal;
+	std::vector<FLOAT> rawShiftVal;
 	rawShiftVal.resize(numVertices);
 	std::fill(rawShiftVal.begin(), rawShiftVal.end(), 0.5);
 
@@ -241,7 +240,7 @@ void fillQuickTopoVars(
 			rawShiftVal[i] = 0.25;
 			if (rawCreaseCount[i] != 2) pinThisPoint = true;
 			if (!pinThisPoint) {
-				std::vector<UINT> newNeigh;
+				std::vector<size_t> newNeigh;
 				std::vector<char> newHard;
 				for (size_t j = 0; j < rawNeighbors[i].size(); ++j) {
 					if (rawHardEdges[i][j] & E_HARD) {
@@ -285,81 +284,9 @@ void fillQuickTopoVars(
 		// Vectorizing flattens the vert list, so I need this data per vert, per component
 		// Maya uses xyzw points, so I need 4. In other cases I'll need 3
 		for (size_t xx = 0; xx < NUM_COMPS; ++xx) {
-			valence[NUM_COMPS * i + xx] = float_t(vale);
+			valence[NUM_COMPS * i + xx] = FLOAT(vale);
 			shiftVal[NUM_COMPS * i + xx] = rawShiftVal[order[i]];
 		}
-	}
-}
-
-
-/*
-   Load the minimal topology data from Maya
-*/
-void loadMayaTopologyData(
-	// Inputs
-	MObject &mesh,
-	MItGeometry& vertIter,
-
-	//outputs
-	std::vector<std::vector<UINT>> &neighbors, // A vector of neighbor indices per vertex
-	std::vector<std::vector<char>> &hardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
-	std::vector<char> &vertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
-){
-	MFnMesh meshFn(mesh);
-	UINT numVertices = meshFn.numVertices();
-	vertData.resize(numVertices);
-	hardEdges.resize(numVertices);
-	neighbors.resize(numVertices);
-
-	for (; !vertIter.isDone(); vertIter.next()) {
-		vertData[vertIter.index()] = V_IN_GROUP;
-	}
-	vertIter.reset();
-
-	MItMeshEdge edgeIter(mesh);
-	for (; !edgeIter.isDone(); edgeIter.next()) {
-		const UINT start = edgeIter.index(0);
-		const UINT end = edgeIter.index(1);
-
-		char edgeData;
-		if (edgeIter.onBoundary()) {
-			edgeData |= E_MESH_BORDER;
-			vertData[start] |= V_MESH_BORDER;
-			vertData[end] |= V_MESH_BORDER;
-		}
-		if (!edgeIter.isSmooth()) edgeData |= E_HARD;
-
-		neighbors[start].push_back(end);
-		neighbors[end].push_back(start);
-
-
-		if (vertData[start] & V_IN_GROUP) {
-			if (!(vertData[end] & V_IN_GROUP)) vertData[start] |= V_GROUP_BORDER;
-		}
-		else if (vertData[end] & V_IN_GROUP) vertData[end] |= V_GROUP_BORDER;
-
-		// an edge is a group border edge iff 
-		// one of the two faces bordering this edge
-		// has a vertex that is not in the group
-		bool internalEdge = true;
-		MIntArray connFaces;
-		edgeIter.getConnectedFaces(connFaces);
-		for (UINT i=0; i<connFaces.length(); ++i){
-			MIntArray polyVerts;
-			meshFn.getPolygonVertices(connFaces[i], polyVerts);
-			for (UINT j=0; j<polyVerts.length(); ++j){
-				if (!(vertData[polyVerts[i]] & V_IN_GROUP)){
-					internalEdge = false;
-					edgeData |= E_GROUP_BORDER;
-					break;
-				}
-			}
-			if (!internalEdge) break;
-		}
-
-		hardEdges[start].push_back(edgeData);
-		hardEdges[end].push_back(edgeData);
-
 	}
 }
 
