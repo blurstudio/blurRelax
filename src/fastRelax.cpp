@@ -36,14 +36,12 @@ SOFTWARE.
 */
 
 
-void edgeProject(
+
+
+void Relaxer::edgeProject(
 	const FLOAT basePoints[][NUM_COMPS],
-	const std::vector<size_t> &group,
-	const std::vector<size_t> &invOrder,
-	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<UINT> &creaseCount,
 	FLOAT smoothPoints[][NUM_COMPS]
-) {
+) const {
 	std::vector<size_t> neigh;
 	for (size_t gidx = 0; gidx < group.size(); ++gidx) {
 		// If we have "hard edges" we have already removed
@@ -127,14 +125,10 @@ void edgeProject(
 	neighborOffsets contains the index offsets of vertices with at least [index] of neighbors
 */
 
-void quickLaplacianSmooth(
+void Relaxer::quickLaplacianSmooth(
 	FLOAT verts2d[][NUM_COMPS],
-	const size_t numVerts,
-	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<FLOAT> &valence,
-	const std::vector<FLOAT> &shiftVal,
 	const FLOAT taubinBias
-) {
+) const {
 	// First, get verts as a single pointer to the contiguous memory stored in (verts2d*)[4]
 	FLOAT* verts = &(verts2d[0][0]);
 
@@ -173,53 +167,49 @@ void quickLaplacianSmooth(
 /*
 	I'm trying to pre-process everything I can right here so I don't have to
 	have any 'if's in quickLaplacianSmooth() so auto-vectorization works
+
+	borderBehavior, // BB_NONE/BB_PIN/BB_SLIDE
+	hardEdgeBehavior, // HB_NONE/HB_PIN/HB_SLIDE
+	groupEdgeBehavior, // GB_NONE/GB_PIN/GB_SLIDE
+	std::vector<std::vector<size_t>> rawNeighbors, // A vector of neighbor indices per vertex
+	std::vector<std::vector<UCHAR>> rawHardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
+	const std::vector<UCHAR> &rawVertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+
 */
-void fillQuickTopoVars(
-	// Behaviors
-	short borderBehavior, // BB_NONE/BB_PIN/BB_SLIDE
-	short hardEdgeBehavior, // HB_NONE/HB_PIN/HB_SLIDE
-	short groupEdgeBehavior, // GB_NONE/GB_PIN/GB_SLIDE
-
-	// Inputs
-	std::vector<std::vector<size_t>> rawNeighbors, // A vector of neighbor indices per vertex. Copied
-	std::vector<std::vector<char>> rawHardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary. Copied
-	const std::vector<char> &rawVertData, // Bitwise per-vert data: Group membership, geo boundary, group boundary,
-
-	// Outputs
-	std::vector<std::vector<size_t>> &neighbors,
-	std::vector<UINT> &creaseCount,
-	std::vector<FLOAT> &shiftVal,
-	std::vector<FLOAT> &valence,
-	std::vector<size_t> &order,
-	std::vector<size_t> &invOrder
-){
-	size_t numVertices = rawVertData.size();
+Relaxer::Relaxer(
+	short borderBehavior,
+	short hardEdgeBehavior,
+	short groupEdgeBehavior,
+	std::vector<std::vector<size_t>> rawNeighbors, // Not a reference
+	std::vector<std::vector<UCHAR>> rawHardEdges, // Not a reference
+	const std::vector<UCHAR> &rawVertData
+) {
 
 	// Read the input data and define the per-point behavior
-	std::vector<char> rawPinPoints;
+	std::vector<UCHAR> rawPinPoints;
 	std::vector<UINT> rawCreaseCount;
 	rawPinPoints.resize(numVertices);
 	rawCreaseCount.resize(numVertices);
 	for (size_t start=0; start<rawNeighbors.size(); ++start){
-		const char startData = rawVertData[start];
-		if (!(startData & V_IN_GROUP)) continue; // short circuit if the start isn't in the group
+		const UCHAR startData = rawVertData[start];
+		if (!(startData & (UCHAR)V::IN_GROUP)) continue; // short circuit if the start isn't in the group
 		for (size_t j=0; j<rawNeighbors[start].size(); ++j){
-			const UINT end = rawNeighbors[start][j];
-			const char endData = rawVertData[end];
-			if (endData & V_IN_GROUP){ // start and end are both in group
-				const char edgeData = rawHardEdges[start][j];
+			const UINT end = (UINT)rawNeighbors[start][j];
+			const UCHAR endData = rawVertData[end];
+			if (endData & (UCHAR)V::IN_GROUP){ // start and end are both in group
+				const UCHAR edgeData = rawHardEdges[start][j];
 
 				// Figure out if this edge is pinned
 				const bool pin =
-					((borderBehavior    == BB_PIN) && (edgeData & E_MESH_BORDER)) ||
-					((hardEdgeBehavior  == HB_PIN) && (edgeData & E_HARD)         && !(edgeData & E_MESH_BORDER)) ||
-					((groupEdgeBehavior == GB_PIN) && (edgeData & E_GROUP_BORDER) && !(edgeData & E_MESH_BORDER));
+					((borderBehavior    == (UCHAR)B::PIN) && (edgeData & (UCHAR)E::MESH_BORDER)) ||
+					((hardEdgeBehavior  == (UCHAR)B::PIN) && (edgeData & (UCHAR)E::HARD)         && !(edgeData & (UCHAR)E::MESH_BORDER)) ||
+					((groupEdgeBehavior == (UCHAR)B::PIN) && (edgeData & (UCHAR)E::GROUP_BORDER) && !(edgeData & (UCHAR)E::MESH_BORDER));
 
 				// Figure out if this edge slides
 				const bool slide =
-					((borderBehavior    == BB_SLIDE) && (edgeData & E_MESH_BORDER)) ||
-					((hardEdgeBehavior  == HB_SLIDE) && (edgeData & E_HARD)         && !(edgeData & E_MESH_BORDER)) ||
-					((groupEdgeBehavior == GB_SLIDE) && (edgeData & E_GROUP_BORDER) && !(edgeData & E_MESH_BORDER));
+					((borderBehavior    == (UCHAR)B::SLIDE) && (edgeData & (UCHAR)E::MESH_BORDER)) ||
+					((hardEdgeBehavior  == (UCHAR)B::SLIDE) && (edgeData & (UCHAR)E::HARD)         && !(edgeData & (UCHAR)E::MESH_BORDER)) ||
+					((groupEdgeBehavior == (UCHAR)B::SLIDE) && (edgeData & (UCHAR)E::GROUP_BORDER) && !(edgeData & (UCHAR)E::MESH_BORDER));
 
 				if (pin) { rawPinPoints[start] = true; }
 				else if (slide) { ++rawCreaseCount[start]; }
@@ -235,28 +225,27 @@ void fillQuickTopoVars(
 	// if a vert has hard neighbors, remove all non-hard neighbors
 	// if a vert is pinned remove all of its neighbors
 	for (size_t i = 0; i < rawNeighbors.size(); ++i) {
-		bool pinThisPoint = rawPinPoints[i];
-		if ((rawCreaseCount[i] != 0) || pinThisPoint) {
-			rawShiftVal[i] = 0.25;
-			if (rawCreaseCount[i] != 2) pinThisPoint = true;
-			if (!pinThisPoint) {
-				std::vector<size_t> newNeigh;
-				std::vector<char> newHard;
+		if ((rawCreaseCount[i] != 0) || rawPinPoints[i]) {
+			if (rawCreaseCount[i] != 2)
+				rawPinPoints[i] = true;
+
+			std::vector<size_t> newNeigh;
+			std::vector<UCHAR> newHard;
+			if (!rawPinPoints[i]) {
 				for (size_t j = 0; j < rawNeighbors[i].size(); ++j) {
-					if (rawHardEdges[i][j] & E_HARD) {
+					if (rawHardEdges[i][j] & (UCHAR)E::HARD) {
 						newNeigh.push_back(rawNeighbors[i][j]);
 						newHard.push_back(rawHardEdges[i][j]);
 					}
 				}
-				rawNeighbors[i] = newNeigh;
-				rawHardEdges[i] = newHard;
 			}
+			rawNeighbors[i] = newNeigh;
+			rawHardEdges[i] = newHard;
+			rawShiftVal[i] = 0.25;
 		}
 	}
 
 	// Reading the data is done. Now we transform the data for fast processing
-	size_t maxValence = rawNeighbors[order[0]].size();
-	neighbors.resize(maxValence);
 	order.resize(numVertices);
 	invOrder.resize(numVertices);
 	creaseCount.resize(numVertices);
@@ -268,6 +257,9 @@ void fillQuickTopoVars(
 	std::iota(order.begin(), order.end(), 0u);
 	std::sort(order.begin(), order.end(), [&rawNeighbors](size_t a, size_t b) {return rawNeighbors[a].size() > rawNeighbors[b].size(); });
 	for (size_t i = 0; i < order.size(); ++i) { invOrder[order[i]] = i; }
+
+	size_t maxValence = rawNeighbors[order[0]].size();
+	neighbors.resize(maxValence);
 
 	// Build the "transposed" neighbor and hard edge values
 	for (size_t i = 0; i < numVertices; ++i) {

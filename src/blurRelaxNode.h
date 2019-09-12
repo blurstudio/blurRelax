@@ -30,18 +30,6 @@ SOFTWARE.
 #define DEFORMER_NAME "BlurRelax"
 #define CHECKSTAT(m) if (!status) {status.perror(m); return status;};
 
-// Double vs Float
-typedef MPoint point_t;
-typedef MPointArray pointArray_t;
-
-void loadMayaTopologyData(
-	MObject &mesh,
-	MItGeometry& vertIter,
-	std::vector<std::vector<size_t>> &neighbors, // A vector of neighbor indices per vertex
-	std::vector<std::vector<char>> &hardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
-	std::vector<char> &vertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
-);
-
 class BlurRelax : public MPxDeformerNode {
 	public:
 		BlurRelax();
@@ -74,37 +62,10 @@ class BlurRelax : public MPxDeformerNode {
 		short hbCheck = 255;
 		short gbCheck = 255;
 
-		// storage for this data doesn't change unless the hashes do
-		std::vector<size_t> order;
-		std::vector<size_t> invOrder;
-		std::vector<std::vector<size_t>> neighbors; // A vector of neighbor indices per vertex
-		std::vector<std::vector<char>> hardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
-		std::vector<char> vertData; // Bitwise per-vert data: Group membership, geo boundary, group boundary,
-		std::vector<FLOAT> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
-		std::vector<FLOAT> valence; // as float for vectorizing
-		std::vector<UINT> creaseCount;
+		MayaRelaxer *relaxer;
 
 		MStatus getTrueWeights(
-				MObject &mesh,
-				MDataBlock &dataBlock,
-				UINT index,
-				std::vector<float> &weightVals,
-				float envelope
-				) const;
-
-		void quickRelax(
-			MObject &mesh,
-			const short borderBehavior,
-			const short hardEdgeBehavior,
-			const short groupEdgeBehavior,
-			const bool reproject,
-			const float taubinBias,
-			const FLOAT iterations,
-			const UINT numVerts,
-			const std::vector<char> &group,
-			FLOAT(*verts)[4] // already resized
-		);
+			MObject &mesh, MDataBlock &dataBlock, UINT index,
+			std::vector<float> &weightVals, float envelope) const;
 };
-
-
 

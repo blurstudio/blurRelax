@@ -26,68 +26,47 @@ SOFTWARE.
 
 typedef double FLOAT;
 typedef unsigned int UINT;
-#define NUM_COMPS 4
-
-// Yes, these should be enums. I'll get to it
-#define V_IN_GROUP 1
-#define V_MESH_BORDER 2
-#define V_GROUP_BORDER 4
-
-#define E_HARD 1
-#define E_MESH_BORDER 2
-#define E_GROUP_BORDER 4
-
-#define BB_NONE   0
-#define BB_PIN    1
-#define BB_SLIDE  2
-
-#define HB_NONE   0
-#define HB_PIN    1
-#define HB_SLIDE  2
-
-#define GB_NONE   0
-#define GB_PIN    1
-#define GB_SLIDE  2
-
-#define SA_LAPLACIAN 0
-#define SA_TAUBIN 1
+typedef unsigned char UCHAR;
+constexpr auto NUM_COMPS = 4;
 
 
-void edgeProject(
-	const FLOAT basePoints[][NUM_COMPS],
-	const std::vector<size_t> &group,
-	const std::vector<size_t> &invOrder,
-	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<UINT> &creaseCount,
-	FLOAT smoothPoints[][NUM_COMPS]
-);
+enum class V : UCHAR { IN_GROUP = 1, MESH_BORDER = 2, GROUP_BORDER = 4 };
+enum class E : UCHAR { HARD = 1, MESH_BORDER = 2, GROUP_BORDER = 4 };
+enum class B : UCHAR { NONE, PIN, SLIDE };
+enum class S : UCHAR { TAUBIN, LAPLACIAN };
 
-void quickLaplacianSmooth(
-	FLOAT verts2d[][NUM_COMPS],
-	const size_t numVerts,
-	const std::vector<std::vector<size_t>> &neighbors,
-	const std::vector<FLOAT> &valence,
-	const std::vector<FLOAT> &shiftVal,
-	const FLOAT taubinBias=1.0
-);
 
-void fillQuickTopoVars(
-	// Behaviors
-	short borderBehavior, // BB_NONE/BB_PIN/BB_SLIDE
-	short hardEdgeBehavior, // HB_NONE/HB_PIN/HB_SLIDE
-	short groupEdgeBehavior, // GB_NONE/GB_PIN/GB_SLIDE
+class Relaxer {
+public:
+	std::vector<size_t> order;
+	std::vector<size_t> invOrder;
+	std::vector<size_t> group;
+	std::vector<std::vector<size_t>> neighbors; // A vector of neighbor indices per vertex
+	std::vector<std::vector<UCHAR>> hardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
+	std::vector<UCHAR> vertData; // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+	std::vector<FLOAT> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
+	std::vector<FLOAT> valence; // as float for vectorizing
+	std::vector<UINT> creaseCount; // The number of neighboring hard edges per vert
+	UINT numVertices;
+	UINT numUnpinned;
 
-	// Inputs
-	std::vector<std::vector<size_t>> rawNeighbors, // A vector of neighbor indices per vertex. Copied
-	std::vector<std::vector<char>> rawHardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary. Copied
-	const std::vector<char> &rawVertData, // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+	Relaxer(
+		short borderBehavior,
+		short hardEdgeBehavior,
+		short groupEdgeBehavior,
+		std::vector<std::vector<size_t>> rawNeighbors,
+		std::vector<std::vector<UCHAR>> rawHardEdges,
+		const std::vector<UCHAR> &rawVertData
+	);
 
-	// Outputs
-	std::vector<std::vector<size_t>> &neighbors,
-	std::vector<UINT> &creaseCount,
-	std::vector<FLOAT> &shiftVal,
-	std::vector<FLOAT> &valence,
-	std::vector<size_t> &order,
-	std::vector<size_t> &invOrder
-);
+	void edgeProject(
+		const FLOAT basePoints[][NUM_COMPS],
+		FLOAT smoothPoints[][NUM_COMPS]
+	) const;
 
+	void quickLaplacianSmooth(
+		FLOAT verts2d[][NUM_COMPS],
+		const FLOAT taubinBias=1.0
+	) const;
+
+};

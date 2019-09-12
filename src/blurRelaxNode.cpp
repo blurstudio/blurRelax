@@ -125,45 +125,45 @@ MStatus BlurRelax::initialize() {
 	MFnNumericAttribute nAttr;
 	MFnTypedAttribute tAttr;
 
-	aBorderBehavior = eAttr.create("borderBehavior", "bb", BB_SLIDE, &status);
+	aBorderBehavior = eAttr.create("borderBehavior", "bb", (UCHAR)B::SLIDE, &status);
 	CHECKSTAT("aBorderBehavior");
 	eAttr.setKeyable(false);
 	eAttr.setChannelBox(true);
-	status = eAttr.addField("None", BB_NONE);
+	status = eAttr.addField("None", (UCHAR)B::NONE);
 	CHECKSTAT("aBorderBehavior");
-	status = eAttr.addField("Pin", BB_PIN);
+	status = eAttr.addField("Pin", (UCHAR)B::PIN);
 	CHECKSTAT("aBorderBehavior");
-	status = eAttr.addField("Slide", BB_SLIDE);
+	status = eAttr.addField("Slide", (UCHAR)B::SLIDE);
 	CHECKSTAT("aBorderBehavior");
 	status = addAttribute(aBorderBehavior);
 	CHECKSTAT("aBorderBehavior");
 	status = attributeAffects(aBorderBehavior, outputGeom);
 	CHECKSTAT("aBorderBehavior");
 
-	aHardEdgeBehavior = eAttr.create("hardEdgeBehavior", "hb", HB_SLIDE, &status);
+	aHardEdgeBehavior = eAttr.create("hardEdgeBehavior", "hb", (UCHAR)B::SLIDE, &status);
 	CHECKSTAT("aHardEdgeBehavior");
 	eAttr.setKeyable(false);
 	eAttr.setChannelBox(true);
-	status = eAttr.addField("None", HB_NONE);
+	status = eAttr.addField("None", (UCHAR)B::NONE);
 	CHECKSTAT("aHardEdgeBehavior");
-	status = eAttr.addField("Pin", HB_PIN);
+	status = eAttr.addField("Pin", (UCHAR)B::PIN);
 	CHECKSTAT("aHardEdgeBehavior");
-	status = eAttr.addField("Slide", HB_SLIDE);
+	status = eAttr.addField("Slide", (UCHAR)B::SLIDE);
 	CHECKSTAT("aHardEdgeBehavior");
 	status = addAttribute(aHardEdgeBehavior);
 	CHECKSTAT("aHardEdgeBehavior");
 	status = attributeAffects(aHardEdgeBehavior, outputGeom);
 	CHECKSTAT("aHardEdgeBehavior");
 
-	aGroupEdgeBehavior = eAttr.create("groupEdgeBehavior", "gb", GB_PIN, &status);
+	aGroupEdgeBehavior = eAttr.create("groupEdgeBehavior", "gb", (UCHAR)B::PIN, &status);
 	CHECKSTAT("aGroupEdgeBehavior");
 	eAttr.setKeyable(false);
 	eAttr.setChannelBox(true);
-	status = eAttr.addField("None", GB_NONE);
+	status = eAttr.addField("None", (UCHAR)B::NONE);
 	CHECKSTAT("aGroupEdgeBehavior");
-	status = eAttr.addField("Pin", GB_PIN);
+	status = eAttr.addField("Pin", (UCHAR)B::PIN);
 	CHECKSTAT("aGroupEdgeBehavior");
-	status = eAttr.addField("Slide", GB_SLIDE);
+	status = eAttr.addField("Slide", (UCHAR)B::SLIDE);
 	CHECKSTAT("aGroupEdgeBehavior");
 	status = addAttribute(aGroupEdgeBehavior);
 	CHECKSTAT("aGroupEdgeBehavior");
@@ -201,6 +201,8 @@ MStatus BlurRelax::initialize() {
 
 	aRecomputeTopo = nAttr.create("recompute", "r", MFnNumericData::kBoolean, false, &status);
 	CHECKSTAT("aRecomputeTopo");
+	nAttr.setKeyable(false);
+	nAttr.setChannelBox(true);
 	status = addAttribute(aRecomputeTopo);
 	CHECKSTAT("aRecomputeTopo");
 	status = attributeAffects(aRecomputeTopo, outputGeom);
@@ -208,6 +210,8 @@ MStatus BlurRelax::initialize() {
 
 	aDeltaMush = nAttr.create("delta", "d", MFnNumericData::kBoolean, false, &status);
 	CHECKSTAT("aDeltaMush");
+	nAttr.setKeyable(false);
+	nAttr.setChannelBox(true);
 	status = addAttribute(aDeltaMush);
 	CHECKSTAT("aDeltaMush");
 	status = attributeAffects(aDeltaMush, outputGeom);
@@ -259,6 +263,12 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 
 		MDataHandle hTBias = dataBlock.inputValue(aTaubinBias);
 		float tBias = hTBias.asFloat();
+
+		MDataHandle hDoDelta = dataBlock.inputValue(aDeltaMush);
+		bool doDelta = hDoDelta.asBool();
+		MDataHandle hDeltaMult = dataBlock.inputValue(aDeltaMult);
+		float deltaMult = hDeltaMult.asFloat();
+
 		// volume preservation uses 2 steps per iteration
 		// so half the number of iterations if I'm volume preserving
 		// The iterations interpolating as floats takes care of 99% of the jumping
@@ -275,17 +285,16 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		tBias = -2.05f * tBias + 1.0f;
 
 		// get the input mesh corresponding to this output
-		MObject thisNode = this->thisMObject();
-		MPlug inPlug(thisNode, input);
+		MPlug inPlug(thisMObject(), input);
 		inPlug.selectAncestorLogicalIndex(multiIndex, input);
 		MDataHandle hInput = dataBlock.inputValue(inPlug);
 		MObject mesh = hInput.asMesh();
 
 		// Get the point values
 		MFnMesh meshFn(mesh);
-		int tNumVerts = meshFn.numVertices();
-		int tNumPolys = meshFn.numPolygons();
-		int tNumEdges = meshFn.numEdges();
+		UINT tNumVerts = meshFn.numVertices();
+		UINT tNumPolys = meshFn.numPolygons();
+		UINT tNumEdges = meshFn.numEdges();
 
 		if (recompute ||
 			(bbCheck != bb) || (hbCheck != hb) || (gbCheck != gb) ||
@@ -297,21 +306,45 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 			// all vertex data is now shuffled by the order vector
 
 			std::vector<std::vector<size_t>> rawNeighbors; // A vector of neighbor indices per vertex
-			std::vector<std::vector<char>> rawHardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
-			std::vector<char> rawVertData; // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+			std::vector<std::vector<UCHAR>> rawHardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
+			std::vector<UCHAR> vertData;
+			loadMayaTopologyData(mesh, meshFn, vertIter, rawNeighbors, rawHardEdges, vertData);
 
-			loadMayaTopologyData(mesh, vertIter, rawNeighbors, rawHardEdges, rawVertData);
-			fillQuickTopoVars(
-				bb, hb, gb, rawNeighbors, rawHardEdges, rawVertData,
-				neighbors, creaseCount, shiftVal, valence, order, invOrder
-			);
+			if (relaxer != NULL) delete relaxer;
+			relaxer = new Relaxer(bb, hb, gb, rawNeighbors, rawHardEdges, vertData);
 		}
 
 		// This can happen if the user is pinning all the points
 		// or all the edges are hard (like when you import an obj)
-		if (neighbors.empty()) {
-			return status;
+		if (relaxer == NULL) return status;
+		if (relaxer->neighbors.empty()) return status;
+
+
+		if (doDelta) {
+			// get the input mesh corresponding to this output
+			MPlug pDeltaBase(thisMObject(), aDeltaBase);
+			status = pDeltaBase.selectAncestorLogicalIndex(multiIndex, aDeltaBase);
+			CHECKSTAT("deltaBase Select")
+			MDataHandle hDeltaBase = dataBlock.inputValue(pDeltaBase, &status);
+			if (!status) {
+				MGlobal::displayError("Invalid delta base mesh");
+				return status;
+			}
+			MObject deltaBase = hDeltaBase.asMesh();
+			if (!deltaBase.isNull()) {
+				MGlobal::displayError("Null delta base mesh");
+				return MStatus::kFailure;
+			}
+			MFnMesh deltaBaseFn(deltaBase);
+			// Just pass the point positions from deltaBaseFn to this->relaxer
+
 		}
+
+
+
+
+
+
 
 		// Build the raw float data buffers
 		pointArray_t mpa;
@@ -326,7 +359,9 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		}
 
 		// Calculate the relax, and store in verts
-		quickRelax(mesh, bb, hb, gb, reproject, tBias, iterations, tNumVerts, vertData, reoVerts);
+
+		bool slide = (borderBehavior == (UCHAR)B::SLIDE) || (hardEdgeBehavior == (UCHAR)B::SLIDE) || (groupEdgeBehavior == (UCHAR)B::SLIDE);
+		quickRelax(mesh, slide, reproject, tBias, iterations, tNumVerts, vertData, reoVerts);
 
 		// Get the painted weight values
 		std::vector<float> weightVals;
@@ -344,176 +379,7 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 	return status;
 }
 
-void BlurRelax::quickRelax(
-	MObject &mesh,
-	const short borderBehavior,
-	const short hardEdgeBehavior,
-	const short groupEdgeBehavior,
-	const bool reproject,
-	const float taubinBias,
-	const FLOAT iterations,
-	const UINT numVerts,
-	const std::vector<char> &group,
-	FLOAT(*verts)[4]
-) {
-	bool rpEdges = (borderBehavior == BB_SLIDE) || (hardEdgeBehavior == HB_SLIDE) || (groupEdgeBehavior == GB_SLIDE);
-	std::vector<size_t> groupIdxs;
-
-	FLOAT (*baseVerts)[4];
-	if (rpEdges) {
-		for (size_t i = 0; i < group.size(); ++i) {
-			if (group[i]) groupIdxs.push_back(i);
-		}
-		// make a copy of the original verts only if they'll be used for edge reprojection
-		baseVerts = new FLOAT[numVerts][4];
-		memcpy(&(baseVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(FLOAT));
-	}
-
-	FLOAT(*prevVerts)[4];
-	prevVerts = new FLOAT[numVerts][4];
-
-	FLOAT iterT, iterFI;
-	iterT = modf(iterations, &iterFI);
-	UINT iterI = (UINT)iterFI;
-	if (iterT > 0.0) {
-		iterI += 1;
-	}
-	
-	size_t nonzeroValence = neighbors[0].size();
-
-	MStatus status;
-	MMeshIntersector octree;
-	MObject smoothMeshPar, smoothMesh;
-	MFnMesh meshFn(mesh);
-	if (reproject) {
-		MFnMeshData smoothMeshParFn;
-		MMeshSmoothOptions smoothOpt;
-		smoothMeshPar = smoothMeshParFn.create();
-		smoothOpt.setDivisions(1);
-		smoothOpt.setKeepBorderEdge(rpEdges);
-		smoothOpt.setSubdivisionType(MMeshSmoothOptions::kCatmullClark);
-		smoothMesh = meshFn.generateSmoothMesh(smoothMeshPar, &smoothOpt);
-		octree.create(smoothMesh);
-	}
-
-	for (size_t r = 0; r < iterI; ++r) {
-		if ((r == iterI - 1) && (iterT > 0.0)){
-			// Store the next-to-last iteration to interpolate with
-			memcpy(&(prevVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(FLOAT));
-		}
-		quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal);
-		if (taubinBias < 1.0){
-			quickLaplacianSmooth(verts, numVerts, neighbors, valence, shiftVal, taubinBias);
-		}
-
-		if (rpEdges) {
-			edgeProject(baseVerts, groupIdxs, invOrder, neighbors, creaseCount, verts);
-		}
-
-		if (reproject) {
-			#pragma omp parallel for if(numVerts>2000)
-			for (int i = 0; i < nonzeroValence; ++i) {
-				if ((creaseCount[i] == 0) && (group[order[i]])) {
-					point_t mf(verts[i][0], verts[i][1], verts[i][2]);
-					MPointOnMesh pom;
-					octree.getClosestPoint(mf, pom);
-					point_t gpf = pom.getPoint();
-					//mfp.set(gpf, i);
-					verts[i][0] = gpf[0];
-					verts[i][1] = gpf[1];
-					verts[i][2] = gpf[2];
-				}
-			}
-		}
-	}
-
-	// Interpolate between prevVerts and verts based on iterT
-	if (iterT > 0.0) {
-		// This should vectorize
-		FLOAT * vv = &verts[0][0];
-		FLOAT * pv = &prevVerts[0][0];
-		for (size_t i = 0; i < numVerts * 4; ++i) {
-			vv[i] = ((vv[i] - pv[i]) * iterT) + pv[i];
-		}
-	}
-
-	if (rpEdges) delete[] baseVerts;
-	delete[] prevVerts;
-}
-
-
-
-
 /*
    Load the minimal topology data from Maya
 */
-void loadMayaTopologyData(
-	// Inputs
-	MObject &mesh,
-	MItGeometry& vertIter,
-
-	//outputs
-	std::vector<std::vector<size_t>> &neighbors, // A vector of neighbor indices per vertex
-	std::vector<std::vector<char>> &hardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
-	std::vector<char> &vertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
-){
-	MFnMesh meshFn(mesh);
-	UINT numVertices = meshFn.numVertices();
-	vertData.resize(numVertices);
-	hardEdges.resize(numVertices);
-	neighbors.resize(numVertices);
-
-	for (; !vertIter.isDone(); vertIter.next()) {
-		vertData[vertIter.index()] = V_IN_GROUP;
-	}
-	vertIter.reset();
-
-	MItMeshEdge edgeIter(mesh);
-	for (; !edgeIter.isDone(); edgeIter.next()) {
-		const UINT start = edgeIter.index(0);
-		const UINT end = edgeIter.index(1);
-
-		char edgeData;
-		if (edgeIter.onBoundary()) {
-			edgeData |= E_MESH_BORDER;
-			vertData[start] |= V_MESH_BORDER;
-			vertData[end] |= V_MESH_BORDER;
-		}
-		if (!edgeIter.isSmooth()) edgeData |= E_HARD;
-
-		neighbors[start].push_back(end);
-		neighbors[end].push_back(start);
-
-
-		if (vertData[start] & V_IN_GROUP) {
-			if (!(vertData[end] & V_IN_GROUP)) vertData[start] |= V_GROUP_BORDER;
-		}
-		else if (vertData[end] & V_IN_GROUP) vertData[end] |= V_GROUP_BORDER;
-
-		// an edge is a group border edge iff 
-		// one of the two faces bordering this edge
-		// has a vertex that is not in the group
-		bool internalEdge = true;
-		MIntArray connFaces;
-		edgeIter.getConnectedFaces(connFaces);
-		for (UINT i=0; i<connFaces.length(); ++i){
-			MIntArray polyVerts;
-			meshFn.getPolygonVertices(connFaces[i], polyVerts);
-			for (UINT j=0; j<polyVerts.length(); ++j){
-				if (!(vertData[polyVerts[i]] & V_IN_GROUP)){
-					internalEdge = false;
-					edgeData |= E_GROUP_BORDER;
-					break;
-				}
-			}
-			if (!internalEdge) break;
-		}
-
-		hardEdges[start].push_back(edgeData);
-		hardEdges[end].push_back(edgeData);
-
-	}
-}
-
-
 
