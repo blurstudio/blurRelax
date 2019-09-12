@@ -13,6 +13,8 @@ set(SOURCE_FILES
     "src/blurRelaxNode.h"
     "src/fastRelax.cpp"
     "src/fastRelax.h"
+    "src/fastMayaRelax.cpp"
+    "src/fastMayaRelax.h"
     "src/pluginRegister.cpp"
 )
 

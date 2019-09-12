@@ -1,9 +1,13 @@
 #include <type_traits>
-#include "fastRelax.h"
 #include <maya/MMeshIntersector.h>
 #include <maya/MFnMesh.h>
 #include <maya/MObject.h>
 #include <maya/MItGeometry.h>
+#include <maya/MPoint.h>
+#include <maya/MPointArray.h>
+#include <maya/MFloatPoint.h>
+#include <maya/MFloatPointArray.h>
+#include "fastRelax.h"
 
 // Double vs Float
 
@@ -14,8 +18,21 @@ class MayaRelaxer: public Relaxer {
 public:
 	MMeshIntersector octree;
 	MObject smoothMeshPar, smoothMesh;
-	MayaRelaxer(MObject &mesh, MFnMesh &meshFn, MItGeometry& vertIter);
 
+	static MayaRelaxer Create(MObject &mesh, MFnMesh &meshFn, MItGeometry& vertIter,
+		short borderBehavior, short hardEdgeBehavior, short groupEdgeBehavior
+	);
+
+	MayaRelaxer(
+		short borderBehavior,
+		short hardEdgeBehavior,
+		short groupEdgeBehavior,
+		std::vector<std::vector<size_t>> rawNeighbors,
+		std::vector<std::vector<UCHAR>> rawHardEdges,
+		const std::vector<UCHAR> &rawVertData
+	) : Relaxer(borderBehavior, hardEdgeBehavior, groupEdgeBehavior, rawNeighbors, rawHardEdges, rawVertData)
+	{ }
+		
 	void MayaRelaxer::quickRelax(
 		MObject &mesh,
 		const bool slide,
@@ -23,9 +40,9 @@ public:
 		const float taubinBias,
 		const FLOAT iterations,
 		FLOAT(*verts)[4]
-	) const ;
+	);
 	void buildOctree(MObject &mesh, bool slide, UINT divisions);
 	void reprojectVerts(FLOAT(*verts)[4]) const;
 	void reorderVerts(MObject &mesh, MFnMesh &meshFn, FLOAT(*reoVerts)[4]) const;
-}
+};
 

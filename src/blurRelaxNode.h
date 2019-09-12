@@ -25,7 +25,7 @@ SOFTWARE.
 #pragma once
 #include <maya/MPxDeformerNode.h> 
 #include <vector>
-#include "fastRelax.h"
+#include "fastMayaRelax.h"
 
 #define DEFORMER_NAME "BlurRelax"
 #define CHECKSTAT(m) if (!status) {status.perror(m); return status;};

@@ -1,9 +1,18 @@
+#include <maya/MFnMeshData.h>
+#include <maya/MItMeshEdge.h>
+#include <maya/MIntArray.h>
+
 #include "fastMayaRelax.h"
 
-MayaRelaxer::MayaRelaxer(MObject &mesh, MFnMesh &meshFn, MItGeometry& vertIter){
-	std::vector<std::vector<size_t>> neighbors, // A vector of neighbor indices per vertex
-	std::vector<std::vector<UCHAR>> hardEdges, // Bitwise per-neighbor data: edge is hard, edge along boundary
-	std::vector<UCHAR> vertData // Bitwise per-vert data: Group membership, geo boundary, group boundary,
+
+MayaRelaxer MayaRelaxer::Create(
+	MObject &mesh, MFnMesh &meshFn, MItGeometry& vertIter,
+	short borderBehavior, short hardEdgeBehavior, short groupEdgeBehavior
+){ 
+
+	std::vector<std::vector<size_t>> neighbors;
+	std::vector<std::vector<UCHAR>> hardEdges;
+	std::vector<UCHAR> vertData;
 
 	UINT numVertices = meshFn.numVertices();
 	vertData.resize(numVertices);
@@ -59,6 +68,8 @@ MayaRelaxer::MayaRelaxer(MObject &mesh, MFnMesh &meshFn, MItGeometry& vertIter){
 		hardEdges[start].push_back(edgeData);
 		hardEdges[end].push_back(edgeData);
 	}
+
+	return MayaRelaxer(borderBehavior, hardEdgeBehavior, groupEdgeBehavior, neighbors, hardEdges, vertData);
 }
 
 void MayaRelaxer::buildOctree(MObject &mesh, bool slide, UINT divisions){
@@ -80,9 +91,9 @@ void MayaRelaxer::buildOctree(MObject &mesh, bool slide, UINT divisions){
 	}
 }
 
-void MayaRelaxer::reproject(FLOAT(*verts)[4]) const{
+void MayaRelaxer::reprojectVerts(FLOAT(*verts)[4]) const{
 	if (!octree.isCreated()) return;
-    #pragma omp parallel for if(numVerts>2000)
+    #pragma omp parallel for if(numVertices>2000)
 	for (int i = 0; i < numUnpinned; ++i) {
 		if ((creaseCount[i] == 0) && (group[order[i]])) {
 			point_t mf(verts[i][0], verts[i][1], verts[i][2]);
@@ -100,10 +111,10 @@ void MayaRelaxer::reproject(FLOAT(*verts)[4]) const{
 void MayaRelaxer::reorderVerts(MObject &mesh, MFnMesh &meshFn, FLOAT(*reoVerts)[4])const{
 	// Build the raw float data buffers
 	pointArray_t mpa;
-	FLOAT(*reoVerts)[4] = new FLOAT[tNumVerts][4];
+	FLOAT(*reoVerts)[4] = new FLOAT[numVertices][4];
 	meshFn.getPoints(mpa);
 
-	for (size_t i = 0; i < tNumVerts; ++i) {
+	for (size_t i = 0; i < numVertices; ++i) {
 		reoVerts[i][0] = mpa[(UINT)order[i]].x;
 		reoVerts[i][1] = mpa[(UINT)order[i]].y;
 		reoVerts[i][2] = mpa[(UINT)order[i]].z;
@@ -119,16 +130,16 @@ void MayaRelaxer::quickRelax(
 	const float taubinBias,
 	const FLOAT iterations,
 	FLOAT(*verts)[4]
-) const {
+) {
 	FLOAT (*baseVerts)[4];
 	if (slide) {
 		// make a copy of the original verts only if they'll be used for edge reprojection
-		baseVerts = new FLOAT[numVerts][4];
-		memcpy(&(baseVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(FLOAT));
+		baseVerts = new FLOAT[numVertices][4];
+		memcpy(&(baseVerts[0][0]), &(verts[0][0]), 4 * numVertices * sizeof(FLOAT));
 	}
 
 	FLOAT(*prevVerts)[4];
-	prevVerts = new FLOAT[numVerts][4];
+	prevVerts = new FLOAT[numVertices][4];
 
 	FLOAT iterT, iterFI;
 	iterT = modf(iterations, &iterFI);
@@ -143,7 +154,7 @@ void MayaRelaxer::quickRelax(
 	for (size_t r = 0; r < iterI; ++r) {
 		// Store the next-to-last iteration to interpolate with
 		if ((r == iterI - 1) && (iterT > 0.0))
-			memcpy(&(prevVerts[0][0]), &(verts[0][0]), 4 * numVerts * sizeof(FLOAT));
+			memcpy(&(prevVerts[0][0]), &(verts[0][0]), 4 * numVertices * sizeof(FLOAT));
 
 		quickLaplacianSmooth(verts);
 		if (taubinBias < 1.0)
@@ -151,7 +162,7 @@ void MayaRelaxer::quickRelax(
 		if (slide)
 			edgeProject(baseVerts, verts);
 		if (doReproject)
-			reproject(verts);
+			reprojectVerts(verts);
 	}
 
 	// Interpolate between prevVerts and verts based on iterT
@@ -159,7 +170,7 @@ void MayaRelaxer::quickRelax(
 		// This should vectorize
 		FLOAT * vv = &verts[0][0];
 		FLOAT * pv = &prevVerts[0][0];
-		for (size_t i = 0; i < numVerts * 4; ++i) {
+		for (size_t i = 0; i < numVertices * 4; ++i) {
 			vv[i] = ((vv[i] - pv[i]) * iterT) + pv[i];
 		}
 	}
