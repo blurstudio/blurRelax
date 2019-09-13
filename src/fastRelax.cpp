@@ -136,7 +136,7 @@ void Relaxer::quickLaplacianSmooth(
 	size_t nzv = neighbors[0].size();
 
 	// number of nonzero components
-	size_t nzc = 4 * nzv;
+	size_t nzc = NUM_COMPS * nzv;
 
 	// The __restrict keyword tells the compiler that *outComp
 	// is not pointed to by any other pointer in this scope
@@ -148,9 +148,9 @@ void Relaxer::quickLaplacianSmooth(
 		const auto &nCol = neighbors[ncIdx];
 		size_t nColCount = nCol.size();
 		for (size_t i = 0; i < nColCount; ++i) {
-			size_t nci = 4 * nCol[i];
-			for (size_t j = 0; j < 4; ++j) {
-				outComp[4*i+j] = outComp[4*i+j] + verts[nci+j];
+			size_t nci = NUM_COMPS * nCol[i];
+			for (size_t j = 0; j < NUM_COMPS; ++j) {
+				outComp[NUM_COMPS*i+j] = outComp[NUM_COMPS*i+j] + verts[nci+j];
 			}
 		}
 	}
@@ -186,6 +186,7 @@ Relaxer::Relaxer(
 ) {
 
 	// Read the input data and define the per-point behavior
+	numVertices = (UINT)rawNeighbors.size();
 	std::vector<UCHAR> rawPinPoints;
 	std::vector<UINT> rawCreaseCount;
 	rawPinPoints.resize(numVertices);

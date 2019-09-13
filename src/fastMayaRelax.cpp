@@ -95,7 +95,7 @@ void MayaRelaxer::buildOctree(MObject &mesh, bool slide, UINT divisions){
 void MayaRelaxer::reprojectVerts(FLOAT(*verts)[NUM_COMPS]) const{
 	if (!octree.isCreated()) return;
     #pragma omp parallel for if(numVertices>2000)
-	for (int i = 0; i < numUnpinned; ++i) {
+	for (UINT i = 0; i < numUnpinned; ++i) {
 		if ((creaseCount[i] == 0) && (group[order[i]])) {
 			point_t mf(verts[i][0], verts[i][1], verts[i][2]);
 			MPointOnMesh pom;
@@ -143,16 +143,11 @@ MMatrix MayaRelaxer::getMatrixAtPoint(MObject &mesh, MFnMesh &meshFn, MItMeshVer
 	return mat;
 }
 
-
-
-
-
 void MayaRelaxer::reorderVerts(pointArray_t mpa, FLOAT(*reoVerts)[NUM_COMPS])const{
 	// Build the raw float data buffers
-	reoVerts = new FLOAT[numVertices][NUM_COMPS];
 	for (size_t i = 0; i < numVertices; ++i) {
 		for (size_t j = 0; j < NUM_COMPS; ++j) {
-			reoVerts[i][j] = mpa[(UINT)order[i]][j];
+			reoVerts[i][j] = mpa[(UINT)order[i]][(UINT)j];
 		}
 	}
 }
@@ -163,10 +158,6 @@ void MayaRelaxer::reorderVerts(MObject &mesh, MFnMesh &meshFn, FLOAT(*reoVerts)[
 	meshFn.getPoints(mpa);
 	reorderVerts(mpa, reoVerts);
 }
-
-
-
-
 
 void MayaRelaxer::revertVerts(FLOAT(*reoVerts)[NUM_COMPS], FLOAT(*reverted)[NUM_COMPS]) const{
 	for (size_t i = 0; i < numVertices; ++i) {
@@ -200,7 +191,7 @@ pointArray_t MayaRelaxer::quickRelax(
 
 	// Get the mesh verts
 	MFnMesh meshFn(mesh);
-	FLOAT(*verts)[NUM_COMPS];
+	FLOAT(*verts)[NUM_COMPS] = new FLOAT[numVertices][NUM_COMPS];
 	reorderVerts(mesh, meshFn, verts);
 
 	// make a copy of the original verts only if they'll be used for edge reprojection
@@ -211,8 +202,7 @@ pointArray_t MayaRelaxer::quickRelax(
 	}
 
 	// Reserve some memory for the next-to-last iteration so we can blend
-	FLOAT(*prevVerts)[NUM_COMPS];
-	prevVerts = new FLOAT[numVertices][NUM_COMPS];
+	FLOAT(*prevVerts)[NUM_COMPS] = new FLOAT[numVertices][NUM_COMPS];
 
 	// If reprojecting, then build the octree
 	if (doReproject) buildOctree(mesh, slide, 1u);

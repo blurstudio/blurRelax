@@ -62,7 +62,8 @@ class BlurRelax : public MPxDeformerNode {
 		short hbCheck = 255;
 		short gbCheck = 255;
 
-		MayaRelaxer *relaxer;
+		MPointArray deltas;
+		MayaRelaxer *relaxer = nullptr;
 
 		MStatus getTrueWeights(
 			MObject &mesh, MDataBlock &dataBlock, UINT index,

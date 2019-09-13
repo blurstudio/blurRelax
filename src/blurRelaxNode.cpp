@@ -40,6 +40,7 @@ SOFTWARE.
 #include <maya/MFnTypedAttribute.h>
 #include <maya/MFnMesh.h>
 #include <maya/MFnMeshData.h>
+#include <maya/MFnComponent.h>
 
 #include <maya/MPoint.h>
 #include <maya/MFloatPoint.h>
@@ -315,18 +316,17 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 			// Populate the variables with *SPECIALLY ORDERED* data
 			// all vertex data is now shuffled by the order vector
 
-			if (relaxer != NULL) delete relaxer;
+			if (relaxer != nullptr) delete relaxer;
 			relaxer = MayaRelaxer::Create(mesh, meshFn, vertIter, bb, hb, gb);
 		}
 
 		// This can happen if the user is pinning all the points
 		// or all the edges are hard (like when you import an obj)
-		if (relaxer == NULL) return status;
+		if (relaxer == nullptr) return status;
 		if (relaxer->neighbors.empty()) return status;
 
 
 		// TODO!! Move these offsets (and the doDelta) into someplace more optimized
-		MPointArray offsets;
 		if (doDelta) {
 			// get the input mesh corresponding to this output
 			MPlug pDeltaBase(thisMObject(), aDeltaBase);
@@ -338,7 +338,7 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 				return status;
 			}
 			MObject deltaBase = hDeltaBase.asMesh();
-			if (!deltaBase.isNull()) {
+			if (deltaBase.isNull()) {
 				MGlobal::displayError("Null delta base mesh");
 				return MStatus::kFailure;
 			}
@@ -357,13 +357,16 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 			// TODO: Get the points in n/t/b space and store
 
 			MItMeshVertex normIt(baseCopy);
-			offsets.setLength(tNumVerts);
+			deltas.setLength(tNumVerts);
 
 			for (; !normIt.isDone(); normIt.next()) {
 				UINT idx = normIt.index();
 				MMatrix mat = relaxer->getMatrixAtPoint(baseCopy, baseCopyFn, normIt);
-				offsets[idx] = baseVerts[idx] * mat.inverse();
+				deltas[idx] = baseVerts[idx] * mat.inverse();
 			}
+		}
+		else {
+			deltas.setLength(0);
 		}
 
 		// Get the painted weight values
@@ -374,25 +377,29 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		pointArray_t mpa = relaxer->quickRelax(mesh, slide, reproject, tBias, iterations);
 
 		if (doDelta) {
+			if (deltas.length() != tNumVerts)
+				return MStatus::kFailure;
+
+			//vertIter.reset();
+			//meshFn.updateSurface();
+			//meshFn.cleanupEdgeSmoothing();
 
 			MItMeshVertex deltaIt(mesh);
 			int prev;
 			point_t mp;
-
 			for (; !vertIter.isDone(); vertIter.next()) {
 				int idx = vertIter.index();
 				deltaIt.setIndex(idx, prev);
 
 				// Get the matrix at the point
 				MMatrix mat = relaxer->getMatrixAtPoint(mesh, meshFn, deltaIt);
-
-				// multiply (offsets[idx] * deltaMultiplier) * mat;
-				mp = (offsets[idx] * deltaMult) * mat;
+				//mp = (deltas[idx] * deltaMult) * mat;
+				point_t zero;
+				mp = zero * mat;
 
 				// then do the setPosition on this point
-				vertIter.setPosition((weightVals[idx]) * mp + (1.0 - weightVals[idx]) * vertIter.position());
+				vertIter.setPosition(mp);
 			}
-
 		}
 		else {
 			for (; !vertIter.isDone(); vertIter.next()) {
@@ -400,8 +407,6 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 				vertIter.setPosition((weightVals[idx]) * mpa[idx] + (1.0 - weightVals[idx]) * vertIter.position());
 			}
 		}
-
-
 	}
 	return status;
 }
