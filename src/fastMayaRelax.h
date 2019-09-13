@@ -19,7 +19,7 @@ public:
 	MMeshIntersector octree;
 	MObject smoothMeshPar, smoothMesh;
 
-	static MayaRelaxer Create(MObject &mesh, MFnMesh &meshFn, MItGeometry& vertIter,
+	static MayaRelaxer* Create(MObject &mesh, MFnMesh &meshFn, MItGeometry& vertIter,
 		short borderBehavior, short hardEdgeBehavior, short groupEdgeBehavior
 	);
 
@@ -33,16 +33,25 @@ public:
 	) : Relaxer(borderBehavior, hardEdgeBehavior, groupEdgeBehavior, rawNeighbors, rawHardEdges, rawVertData)
 	{ }
 		
-	void MayaRelaxer::quickRelax(
+	pointArray_t MayaRelaxer::quickRelax(
 		MObject &mesh,
 		const bool slide,
 		const bool doReproject,
 		const float taubinBias,
-		const FLOAT iterations,
-		FLOAT(*verts)[4]
+		const FLOAT iterations
 	);
+
 	void buildOctree(MObject &mesh, bool slide, UINT divisions);
-	void reprojectVerts(FLOAT(*verts)[4]) const;
-	void reorderVerts(MObject &mesh, MFnMesh &meshFn, FLOAT(*reoVerts)[4]) const;
+	void reprojectVerts(FLOAT(*verts)[NUM_COMPS]) const;
+
+	void reorderVerts(MObject &mesh, MFnMesh &meshFn, FLOAT(*reoVerts)[NUM_COMPS]) const;
+	void reorderVerts(pointArray_t mpa, FLOAT(*reoVerts)[NUM_COMPS]) const;
+
+	void revertVerts(FLOAT(*reoVerts)[NUM_COMPS], FLOAT(*reverted)[NUM_COMPS]) const;
+	pointArray_t revertVerts(FLOAT(*reoVerts)[NUM_COMPS]) const;
+
+
+	MMatrix getMatrixAtPoint(MObject &mesh, MFnMesh &meshFn, MItMeshVertex &vertIt) const;
+
 };
 

@@ -30,7 +30,8 @@ SOFTWARE.
 
 #include <maya/MMeshIntersector.h>
 
-#include <maya/MItMeshedge.h>
+#include <maya/MItMeshEdge.h>
+#include <maya/MItMeshVertex.h>
 #include <maya/MItGeometry.h>
 #include <maya/MPxDeformerNode.h> 
 
@@ -44,6 +45,13 @@ SOFTWARE.
 #include <maya/MFloatPoint.h>
 #include <maya/MPointArray.h>
 #include <maya/MFloatPointArray.h>
+#include <maya/MFloatVector.h>
+#include <maya/MFloatVectorArray.h>
+#include <maya/MVector.h>
+#include <maya/MVectorArray.h>
+
+#include <maya/MMatrix.h>
+#include <maya/MMatrixArray.h>
 
 #include "blurRelaxNode.h"
 #include "fastRelax.h"
@@ -296,6 +304,8 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		UINT tNumPolys = meshFn.numPolygons();
 		UINT tNumEdges = meshFn.numEdges();
 
+		bool slide = (bb == (UCHAR)B::SLIDE) || (hb == (UCHAR)B::SLIDE) || (gb == (UCHAR)B::SLIDE);
+
 		if (recompute ||
 			(bbCheck != bb) || (hbCheck != hb) || (gbCheck != gb) ||
 			(tNumVerts != hNumVerts) || (tNumPolys != hNumPolys) || (tNumEdges != hNumEdges)
@@ -305,13 +315,8 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 			// Populate the variables with *SPECIALLY ORDERED* data
 			// all vertex data is now shuffled by the order vector
 
-			std::vector<std::vector<size_t>> rawNeighbors; // A vector of neighbor indices per vertex
-			std::vector<std::vector<UCHAR>> rawHardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
-			std::vector<UCHAR> vertData;
-			loadMayaTopologyData(mesh, meshFn, vertIter, rawNeighbors, rawHardEdges, vertData);
-
 			if (relaxer != NULL) delete relaxer;
-			relaxer = new Relaxer(bb, hb, gb, rawNeighbors, rawHardEdges, vertData);
+			relaxer = MayaRelaxer::Create(mesh, meshFn, vertIter, bb, hb, gb);
 		}
 
 		// This can happen if the user is pinning all the points
@@ -320,6 +325,8 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		if (relaxer->neighbors.empty()) return status;
 
 
+		// TODO!! Move these offsets (and the doDelta) into someplace more optimized
+		MPointArray offsets;
 		if (doDelta) {
 			// get the input mesh corresponding to this output
 			MPlug pDeltaBase(thisMObject(), aDeltaBase);
@@ -335,51 +342,66 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 				MGlobal::displayError("Null delta base mesh");
 				return MStatus::kFailure;
 			}
-			MFnMesh deltaBaseFn(deltaBase);
-			// Just pass the point positions from deltaBaseFn to this->relaxer
 
+			// Create a copy of the input mesh so we can have maya do the normal/tangent/binormal calculations
+			MFnMeshData baseCopyParFn;
+			MObject baseCopyPar = baseCopyParFn.create();
+			MFnMesh baseCopyFn;
+			MObject baseCopy = baseCopyFn.copy(deltaBase, baseCopyPar);
+
+			// get a base and smoothed copy of the original verts
+			pointArray_t baseVerts, smoothedBaseVerts;
+			baseCopyFn.getPoints(baseVerts);
+			smoothedBaseVerts = relaxer->quickRelax(baseCopy, slide, /*reproject*/ false, tBias, iterations);
+			baseCopyFn.setPoints(smoothedBaseVerts);
+			// TODO: Get the points in n/t/b space and store
+
+			MItMeshVertex normIt(baseCopy);
+			offsets.setLength(tNumVerts);
+
+			for (; !normIt.isDone(); normIt.next()) {
+				UINT idx = normIt.index();
+				MMatrix mat = relaxer->getMatrixAtPoint(baseCopy, baseCopyFn, normIt);
+				offsets[idx] = baseVerts[idx] * mat.inverse();
+			}
 		}
-
-
-
-
-
-
-
-		// Build the raw float data buffers
-		pointArray_t mpa;
-		FLOAT(*reoVerts)[4] = new FLOAT[tNumVerts][4];
-		meshFn.getPoints(mpa);
-
-		for (size_t i = 0; i < tNumVerts; ++i) {
-			reoVerts[i][0] = mpa[(UINT)order[i]].x;
-			reoVerts[i][1] = mpa[(UINT)order[i]].y;
-			reoVerts[i][2] = mpa[(UINT)order[i]].z;
-			reoVerts[i][3] = mpa[(UINT)order[i]].w;
-		}
-
-		// Calculate the relax, and store in verts
-
-		bool slide = (borderBehavior == (UCHAR)B::SLIDE) || (hardEdgeBehavior == (UCHAR)B::SLIDE) || (groupEdgeBehavior == (UCHAR)B::SLIDE);
-		quickRelax(mesh, slide, reproject, tBias, iterations, tNumVerts, vertData, reoVerts);
 
 		// Get the painted weight values
 		std::vector<float> weightVals;
 		status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
 
-		// Finally set the output
-		for (; !vertIter.isDone(); vertIter.next()) {
-			const UINT idx = vertIter.index();
-			vertIter.setPosition((weightVals[idx]) * point_t(reoVerts[invOrder[idx]]) + (1.0 - weightVals[idx]) * vertIter.position());
+		// Get the smoothed point positions
+		pointArray_t mpa = relaxer->quickRelax(mesh, slide, reproject, tBias, iterations);
+
+		if (doDelta) {
+
+			MItMeshVertex deltaIt(mesh);
+			int prev;
+			point_t mp;
+
+			for (; !vertIter.isDone(); vertIter.next()) {
+				int idx = vertIter.index();
+				deltaIt.setIndex(idx, prev);
+
+				// Get the matrix at the point
+				MMatrix mat = relaxer->getMatrixAtPoint(mesh, meshFn, deltaIt);
+
+				// multiply (offsets[idx] * deltaMultiplier) * mat;
+				mp = (offsets[idx] * deltaMult) * mat;
+
+				// then do the setPosition on this point
+				vertIter.setPosition((weightVals[idx]) * mp + (1.0 - weightVals[idx]) * vertIter.position());
+			}
+
+		}
+		else {
+			for (; !vertIter.isDone(); vertIter.next()) {
+				int idx = vertIter.index();
+				vertIter.setPosition((weightVals[idx]) * mpa[idx] + (1.0 - weightVals[idx]) * vertIter.position());
+			}
 		}
 
-		// Make sure to clean up after myself
-		delete [] reoVerts;
+
 	}
 	return status;
 }
-
-/*
-   Load the minimal topology data from Maya
-*/
-
