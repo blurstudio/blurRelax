@@ -40,7 +40,7 @@ class Relaxer {
 public:
 	std::vector<size_t> order;
 	std::vector<size_t> invOrder;
-	std::vector<size_t> group;
+	std::vector<size_t> groupIdxs;
 	std::vector<std::vector<size_t>> neighbors; // A vector of neighbor indices per vertex
 	std::vector<std::vector<UCHAR>> hardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
 	std::vector<UCHAR> vertData; // Bitwise per-vert data: Group membership, geo boundary, group boundary,

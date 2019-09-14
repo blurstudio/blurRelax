@@ -2,6 +2,7 @@
 #include <maya/MItMeshEdge.h>
 #include <maya/MItMeshVertex.h>
 #include <maya/MIntArray.h>
+#include <maya/MItMeshPolygon.h>
 
 #include "fastMayaRelax.h"
 
@@ -13,15 +14,15 @@ MayaRelaxer* MayaRelaxer::Create(
 
 	std::vector<std::vector<size_t>> neighbors;
 	std::vector<std::vector<UCHAR>> hardEdges;
-	std::vector<UCHAR> vertData;
+	std::vector<UCHAR> rawVertData;
 
 	UINT numVertices = meshFn.numVertices();
-	vertData.resize(numVertices);
+	rawVertData.resize(numVertices);
 	hardEdges.resize(numVertices);
 	neighbors.resize(numVertices);
 
 	for (; !vertIter.isDone(); vertIter.next()) {
-		vertData[vertIter.index()] = (UCHAR)V::IN_GROUP;
+		rawVertData[vertIter.index()] = (UCHAR)V::IN_GROUP;
 	}
 	vertIter.reset();
 
@@ -33,8 +34,8 @@ MayaRelaxer* MayaRelaxer::Create(
 		UCHAR edgeData = 0;
 		if (edgeIter.onBoundary()) {
 			edgeData |= (UCHAR)E::MESH_BORDER;
-			vertData[start] |= (UCHAR)V::MESH_BORDER;
-			vertData[end] |= (UCHAR)V::MESH_BORDER;
+			rawVertData[start] |= (UCHAR)V::MESH_BORDER;
+			rawVertData[end] |= (UCHAR)V::MESH_BORDER;
 		}
 		if (!edgeIter.isSmooth()) edgeData |= (UCHAR)E::HARD;
 
@@ -42,10 +43,10 @@ MayaRelaxer* MayaRelaxer::Create(
 		neighbors[end].push_back(start);
 
 
-		if (vertData[start] & (UCHAR)V::IN_GROUP) {
-			if (!(vertData[end] & (UCHAR)V::IN_GROUP)) vertData[start] |= (UCHAR)V::GROUP_BORDER;
+		if (rawVertData[start] & (UCHAR)V::IN_GROUP) {
+			if (!(rawVertData[end] & (UCHAR)V::IN_GROUP)) rawVertData[start] |= (UCHAR)V::GROUP_BORDER;
 		}
-		else if (vertData[end] & (UCHAR)V::IN_GROUP) vertData[end] |= (UCHAR)V::GROUP_BORDER;
+		else if (rawVertData[end] & (UCHAR)V::IN_GROUP) rawVertData[end] |= (UCHAR)V::GROUP_BORDER;
 
 		// an edge is a group border edge iff 
 		// one of the two faces bordering this edge
@@ -57,7 +58,7 @@ MayaRelaxer* MayaRelaxer::Create(
 			MIntArray polyVerts;
 			meshFn.getPolygonVertices(connFaces[i], polyVerts);
 			for (UINT j=0; j<polyVerts.length(); ++j){
-				if (!(vertData[polyVerts[i]] & (UCHAR)V::IN_GROUP)){
+				if (!(rawVertData[polyVerts[i]] & (UCHAR)V::IN_GROUP)){
 					internalEdge = false;
 					edgeData |= (UCHAR)E::GROUP_BORDER;
 					break;
@@ -70,67 +71,71 @@ MayaRelaxer* MayaRelaxer::Create(
 		hardEdges[end].push_back(edgeData);
 	}
 
-	return new MayaRelaxer(borderBehavior, hardEdgeBehavior, groupEdgeBehavior, neighbors, hardEdges, vertData);
+	return new MayaRelaxer(borderBehavior, hardEdgeBehavior, groupEdgeBehavior, neighbors, hardEdges, rawVertData);
 }
 
-void MayaRelaxer::buildOctree(MObject &mesh, bool slide, UINT divisions){
-	MStatus status;
+std::vector<MMatrix> MayaRelaxer::getVertMatrices(MObject &mesh, MFnMesh &meshFn) const {
+	MStatus stat;
+	UINT numVerts = meshFn.numVertices();
 
-	if (divisions == 0){
-		octree.create(mesh);
-	}
-	else {
-		MFnMesh meshFn(mesh);
-		MFnMeshData smoothMeshParFn;
-		MMeshSmoothOptions smoothOpt;
-		smoothMeshPar = smoothMeshParFn.create();
-		smoothOpt.setDivisions(1);
-		smoothOpt.setKeepBorderEdge(slide);
-		smoothOpt.setSubdivisionType(MMeshSmoothOptions::kCatmullClark);
-		smoothMesh = meshFn.generateSmoothMesh(smoothMeshPar, &smoothOpt);
-		octree.create(smoothMesh);
-	}
-}
+	MFloatVectorArray norms, faceTangs, tangs;
+	MFloatPointArray points;
+	meshFn.getVertexNormals(false, norms);
+	meshFn.getTangents(faceTangs);
+	meshFn.getPoints(points);
 
-void MayaRelaxer::reprojectVerts(FLOAT(*verts)[NUM_COMPS]) const{
-	if (!octree.isCreated()) return;
-    #pragma omp parallel for if(numVertices>2000)
-	for (UINT i = 0; i < numUnpinned; ++i) {
-		if ((creaseCount[i] == 0) && (group[order[i]])) {
-			point_t mf(verts[i][0], verts[i][1], verts[i][2]);
-			MPointOnMesh pom;
-			octree.getClosestPoint(mf, pom);
-			point_t gpf = pom.getPoint();
-			//mfp.set(gpf, i);
-			verts[i][0] = gpf[0];
-			verts[i][1] = gpf[1];
-			verts[i][2] = gpf[2];
+	tangs.setLength(numVerts);
+	
+	MIntArray counts, connects;
+	meshFn.getVertices(counts, connects);
+
+	int offset = 0;
+	std::vector<char> dones(numVerts);
+	for (UINT faceIdx = 0; faceIdx < counts.length(); ++faceIdx) {
+		int count = counts[faceIdx];
+
+		for (int i = 0; i < count; ++i) {
+			int vIdx = connects[offset + i];
+			if (!dones[vIdx]) {
+				dones[vIdx] = 1;
+				tangs[vIdx] = faceTangs[offset + i];
+			}
 		}
+		offset += count;
 	}
+
+	std::vector<MMatrix> out(numVerts);
+	for (UINT i = 0; i < numVerts; ++i) {
+		MFloatPoint &vert = points[i];
+		MFloatVector &norm = norms[i];
+		MFloatVector &tang = tangs[i];
+
+		MFloatVector binm = (norm ^ tang).normal();
+		tang = (binm ^ norm).normal();
+
+		double mm[4][4] = {
+			{norm[0], tang[0], binm[0], 0.0},
+			{norm[1], tang[1], binm[1], 0.0},
+			{norm[2], tang[2], binm[2], 0.0},
+			{vert[0], vert[1], vert[2], 1.0}
+		};
+		out[i] = MMatrix(mm);
+	}
+
+	return out;
 }
 
 
 
 MMatrix MayaRelaxer::getMatrixAtPoint(MObject &mesh, MFnMesh &meshFn, MItMeshVertex &vertIt) const {
 	MVector norm, tang, binm;
-	MIntArray connFaces;
-
 
 	int idx = vertIt.index();
 	vertIt.getNormal(norm);
-	vertIt.getConnectedFaces(connFaces);
-	meshFn.getFaceVertexTangent(connFaces[0], idx, tang);
+	meshFn.getFaceVertexTangent(connFaces[idx], idx, tang);
 	binm = (norm ^ tang).normal();
 	tang = (binm ^ norm).normal();
 	MPoint vert = vertIt.position();
-
-	/*
-	double mm[4][4];
-	mm[0][0] = norm[0]; mm[0][1] = tang[0]; mm[0][2] = binm[0]; mm[0][3] = 0.0; 
-	mm[1][0] = norm[1]; mm[1][1] = tang[1]; mm[1][2] = binm[1]; mm[1][3] = 0.0;
-	mm[2][0] = norm[2]; mm[2][1] = tang[2]; mm[2][2] = binm[2]; mm[2][3] = 0.0;
-	mm[3][0] = vert[0]; mm[3][1] = vert[1]; mm[3][2] = vert[2]; mm[3][3] = 1.0;
-	*/
 
 	double mm[4][4] = {
 		{norm[0], tang[0], binm[0], 0.0},
@@ -175,10 +180,39 @@ pointArray_t MayaRelaxer::revertVerts(FLOAT(*reoVerts)[NUM_COMPS]) const{
 	return reverted;
 }
 
+
+
+
+void MayaRelaxer::buildOctree(MObject &mesh, bool slide, UINT divisions){
+}
+
+void MayaRelaxer::reprojectVerts(FLOAT(*verts)[NUM_COMPS], MMeshIntersector &octree) const{
+	if (!octree.isCreated()) return;
+	UINT nzv = (UINT)neighbors[0].size();
+    #pragma omp parallel for if(numVertices>2000)
+	for (UINT i = 0; i < nzv; ++i) {
+		if ((creaseCount[i] == 0) && (vertData[i] && (UCHAR)V::IN_GROUP)) {
+			point_t mf(verts[i][0], verts[i][1], verts[i][2]);
+			MPointOnMesh pom;
+			octree.getClosestPoint(mf, pom);
+			point_t gpf = pom.getPoint();
+			//mfp.set(gpf, i);
+			verts[i][0] = gpf[0];
+			verts[i][1] = gpf[1];
+			verts[i][2] = gpf[2];
+		}
+	}
+}
+
+
+
+
+
 pointArray_t MayaRelaxer::quickRelax(
 	MObject &mesh,
 	const bool slide,
 	const bool doReproject,
+	const UINT reprojectDivisons,
 	const float taubinBias,
 	const FLOAT iterations
 ) {
@@ -205,7 +239,27 @@ pointArray_t MayaRelaxer::quickRelax(
 	FLOAT(*prevVerts)[NUM_COMPS] = new FLOAT[numVertices][NUM_COMPS];
 
 	// If reprojecting, then build the octree
-	if (doReproject) buildOctree(mesh, slide, 1u);
+	MMeshIntersector octree;
+	MObject smoothMeshPar, smoothMesh;
+	if (doReproject) {
+		MStatus status;
+		int divisions = 0;
+
+		if (reprojectDivisons == 0){
+			octree.create(mesh);
+		}
+		else {
+			MFnMesh meshFn(mesh);
+			MFnMeshData smoothMeshParFn;
+			MMeshSmoothOptions smoothOpt;
+			smoothMeshPar = smoothMeshParFn.create();
+			smoothOpt.setDivisions(reprojectDivisons);
+			smoothOpt.setKeepBorderEdge(slide);
+			smoothOpt.setSubdivisionType(MMeshSmoothOptions::kCatmullClark);
+			smoothMesh = meshFn.generateSmoothMesh(smoothMeshPar, &smoothOpt);
+			octree.create(smoothMesh);
+		}
+	}
 
 	for (size_t r = 0; r < iterI; ++r) {
 		// Store the next-to-last iteration to interpolate with
@@ -218,7 +272,7 @@ pointArray_t MayaRelaxer::quickRelax(
 		if (slide)
 			edgeProject(baseVerts, verts);
 		if (doReproject)
-			reprojectVerts(verts);
+			reprojectVerts(verts, octree);
 	}
 
 	// Interpolate between prevVerts and verts based on iterT

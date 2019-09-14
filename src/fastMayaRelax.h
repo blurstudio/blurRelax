@@ -7,6 +7,7 @@
 #include <maya/MPointArray.h>
 #include <maya/MFloatPoint.h>
 #include <maya/MFloatPointArray.h>
+#include <maya/MMatrixArray.h>
 #include "fastRelax.h"
 
 // Double vs Float
@@ -16,8 +17,7 @@ typedef typename std::conditional<sizeof(FLOAT) == sizeof(double), MPointArray, 
 
 class MayaRelaxer: public Relaxer {
 public:
-	MMeshIntersector octree;
-	MObject smoothMeshPar, smoothMesh;
+	std::vector<int> connFaces;
 
 	static MayaRelaxer* Create(MObject &mesh, MFnMesh &meshFn, MItGeometry& vertIter,
 		short borderBehavior, short hardEdgeBehavior, short groupEdgeBehavior
@@ -37,12 +37,13 @@ public:
 		MObject &mesh,
 		const bool slide,
 		const bool doReproject,
+		const UINT reprojectDivisons,
 		const float taubinBias,
 		const FLOAT iterations
 	);
 
 	void buildOctree(MObject &mesh, bool slide, UINT divisions);
-	void reprojectVerts(FLOAT(*verts)[NUM_COMPS]) const;
+	void reprojectVerts(FLOAT(*verts)[NUM_COMPS], MMeshIntersector &octree) const;
 
 	void reorderVerts(MObject &mesh, MFnMesh &meshFn, FLOAT(*reoVerts)[NUM_COMPS]) const;
 	void reorderVerts(pointArray_t mpa, FLOAT(*reoVerts)[NUM_COMPS]) const;
@@ -52,6 +53,7 @@ public:
 
 
 	MMatrix getMatrixAtPoint(MObject &mesh, MFnMesh &meshFn, MItMeshVertex &vertIt) const;
+	std::vector<MMatrix> MayaRelaxer::getVertMatrices(MObject &mesh, MFnMesh &meshFn) const;
 
 };
 

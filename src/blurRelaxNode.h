@@ -47,6 +47,7 @@ class BlurRelax : public MPxDeformerNode {
 		static MObject aHardEdgeBehavior;
 		static MObject aGroupEdgeBehavior;
 		static MObject aReproject;
+		static MObject aReprojectDivs;
 		static MObject aTaubinBias;
 		static MObject aRecomputeTopo;
 		static MObject aDeltaMush;
@@ -62,7 +63,8 @@ class BlurRelax : public MPxDeformerNode {
 		short hbCheck = 255;
 		short gbCheck = 255;
 
-		MPointArray deltas;
+		MPointArray deltas2;
+		std::vector<MPoint> deltas;
 		MayaRelaxer *relaxer = nullptr;
 
 		MStatus getTrueWeights(

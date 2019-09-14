@@ -35,20 +35,17 @@ SOFTWARE.
 	strings of edges. But for now, it's just direct neighbors
 */
 
-
-
-
 void Relaxer::edgeProject(
 	const FLOAT basePoints[][NUM_COMPS],
 	FLOAT smoothPoints[][NUM_COMPS]
 ) const {
 	std::vector<size_t> neigh;
-	for (size_t gidx = 0; gidx < group.size(); ++gidx) {
+	for (size_t gidx = 0; gidx < groupIdxs.size(); ++gidx) {
 		// If we have "hard edges" we have already removed
 		// any soft edges, so if the crease count for this vertex is zero
 		// we can just completely skip it. And if it's >0, then we can
 		// assume that all stored neighbors are hard.
-		size_t idx = invOrder[group[gidx]];
+		size_t idx = invOrder[groupIdxs[gidx]];
 
 		FLOAT *avg = smoothPoints[idx];
 		const FLOAT *basePos = basePoints[idx];
@@ -250,6 +247,8 @@ Relaxer::Relaxer(
 	order.resize(numVertices);
 	invOrder.resize(numVertices);
 	creaseCount.resize(numVertices);
+	vertData.resize(numVertices);
+	groupIdxs.resize(numVertices);
 	shiftVal.resize(numVertices * NUM_COMPS);
 	valence.resize(numVertices * NUM_COMPS);
 
@@ -273,6 +272,10 @@ Relaxer::Relaxer(
 		// only needed for slide and reproject
 		// and I only need to know if it's ==0 or ==2
 		creaseCount[i] = rawCreaseCount[order[i]];
+		vertData[i] = rawVertData[order[i]];
+
+		if (vertData[i] & (UCHAR)V::IN_GROUP)
+			groupIdxs.push_back((size_t)i);
 
 		// Vectorizing flattens the vert list, so I need this data per vert, per component
 		// Maya uses xyzw points, so I need 4. In other cases I'll need 3

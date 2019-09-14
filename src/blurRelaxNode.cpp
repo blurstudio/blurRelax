@@ -41,6 +41,7 @@ SOFTWARE.
 #include <maya/MFnMesh.h>
 #include <maya/MFnMeshData.h>
 #include <maya/MFnComponent.h>
+#include <maya/MFnGeometryFilter.h>
 
 #include <maya/MPoint.h>
 #include <maya/MFloatPoint.h>
@@ -66,6 +67,7 @@ MObject BlurRelax::aBorderBehavior;
 MObject BlurRelax::aHardEdgeBehavior;
 MObject BlurRelax::aGroupEdgeBehavior;
 MObject BlurRelax::aReproject;
+MObject BlurRelax::aReprojectDivs;
 MObject BlurRelax::aTaubinBias;
 MObject BlurRelax::aRecomputeTopo;
 MObject BlurRelax::aDeltaMush;
@@ -188,6 +190,16 @@ MStatus BlurRelax::initialize() {
 	status = attributeAffects(aReproject, outputGeom);
 	CHECKSTAT("aReproject");
 
+	aReprojectDivs = nAttr.create("reprojectDivs", "rpd", MFnNumericData::kInt, 1, &status);
+	CHECKSTAT("aReprojectDivs");
+	nAttr.setMin(0);
+	nAttr.setSoftMax(3);
+	nAttr.setChannelBox(true);
+	status = addAttribute(aReprojectDivs);
+	CHECKSTAT("aReprojectDivs");
+	status = attributeAffects(aReprojectDivs, outputGeom);
+	CHECKSTAT("aReprojectDivs");
+
 	// Taubin Bias is divided by 1000 internally
 	aTaubinBias = nAttr.create("preserveVolume", "pv", MFnNumericData::kFloat, 0.0f, &status);
 	CHECKSTAT("aTaubinBias");
@@ -267,6 +279,10 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		short gb = hGroupEdge.asShort();
 		MDataHandle hReproject = dataBlock.inputValue(aReproject);
 		bool reproject = hReproject.asBool();
+
+		MDataHandle hReprojectDivs = dataBlock.inputValue(aReprojectDivs);
+		int reproDivs = hReprojectDivs.asInt();
+
 		MDataHandle hRecompute = dataBlock.inputValue(aRecomputeTopo);
 		bool recompute = hRecompute.asBool();
 
@@ -293,11 +309,13 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		// and that value looked good on my test mesh.
 		tBias = -2.05f * tBias + 1.0f;
 
-		// get the input mesh corresponding to this output
-		MPlug inPlug(thisMObject(), input);
-		inPlug.selectAncestorLogicalIndex(multiIndex, input);
-		MDataHandle hInput = dataBlock.inputValue(inPlug);
-		MObject mesh = hInput.asMesh();
+		// Maya automatically copies the input plug to the output plug
+		// and then gives you an iterator over that
+		// So get the OUTPUT mesh corresponding to the mutiIndex
+		MPlug outPlug(thisMObject(), outputGeom);
+		outPlug.selectAncestorLogicalIndex(multiIndex, outputGeom);
+		MDataHandle hOutput = dataBlock.outputValue(outPlug);
+		MObject mesh = hOutput.asMesh();
 
 		// Get the point values
 		MFnMesh meshFn(mesh);
@@ -328,6 +346,7 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 
 		// TODO!! Move these offsets (and the doDelta) into someplace more optimized
 		if (doDelta) {
+
 			// get the input mesh corresponding to this output
 			MPlug pDeltaBase(thisMObject(), aDeltaBase);
 			status = pDeltaBase.selectAncestorLogicalIndex(multiIndex, aDeltaBase);
@@ -352,21 +371,22 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 			// get a base and smoothed copy of the original verts
 			pointArray_t baseVerts, smoothedBaseVerts;
 			baseCopyFn.getPoints(baseVerts);
-			smoothedBaseVerts = relaxer->quickRelax(baseCopy, slide, /*reproject*/ false, tBias, iterations);
+			bool deltaRepro = false;
+			UINT deltaReproDivs = 0;
+			smoothedBaseVerts = relaxer->quickRelax(baseCopy, slide, deltaRepro, deltaReproDivs, tBias, iterations);
 			baseCopyFn.setPoints(smoothedBaseVerts);
 			// TODO: Get the points in n/t/b space and store
 
+			std::vector<MMatrix> mats = relaxer->getVertMatrices(baseCopy, baseCopyFn);
 			MItMeshVertex normIt(baseCopy);
-			deltas.setLength(tNumVerts);
-
+			deltas.resize(tNumVerts);
 			for (; !normIt.isDone(); normIt.next()) {
 				UINT idx = normIt.index();
-				MMatrix mat = relaxer->getMatrixAtPoint(baseCopy, baseCopyFn, normIt);
-				deltas[idx] = baseVerts[idx] * mat.inverse();
+				deltas[idx] = baseVerts[idx] * mats[idx].inverse();
 			}
 		}
 		else {
-			deltas.setLength(0);
+			deltas.resize(0);
 		}
 
 		// Get the painted weight values
@@ -374,31 +394,25 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
 
 		// Get the smoothed point positions
-		pointArray_t mpa = relaxer->quickRelax(mesh, slide, reproject, tBias, iterations);
+		pointArray_t mpa = relaxer->quickRelax(mesh, slide, reproject, reproDivs, tBias, iterations);
+
 
 		if (doDelta) {
-			if (deltas.length() != tNumVerts)
+			if (deltas.size() != tNumVerts)
 				return MStatus::kFailure;
 
-			//vertIter.reset();
-			//meshFn.updateSurface();
-			//meshFn.cleanupEdgeSmoothing();
+			for (; !vertIter.isDone(); vertIter.next()) {
+				vertIter.setPosition(mpa[vertIter.index()]);
+			}
+			vertIter.reset();
 
-			MItMeshVertex deltaIt(mesh);
-			int prev;
-			point_t mp;
+			std::vector<MMatrix> mats = relaxer->getVertMatrices(mesh, meshFn);
+
 			for (; !vertIter.isDone(); vertIter.next()) {
 				int idx = vertIter.index();
-				deltaIt.setIndex(idx, prev);
-
-				// Get the matrix at the point
-				MMatrix mat = relaxer->getMatrixAtPoint(mesh, meshFn, deltaIt);
-				//mp = (deltas[idx] * deltaMult) * mat;
-				point_t zero;
-				mp = zero * mat;
-
+				point_t mp = (deltas[idx] * deltaMult) * mats[idx];
 				// then do the setPosition on this point
-				vertIter.setPosition(mp);
+				vertIter.setPosition((weightVals[idx]) * mp + (1.0 - weightVals[idx]) * vertIter.position());
 			}
 		}
 		else {
