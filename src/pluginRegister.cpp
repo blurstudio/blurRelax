@@ -23,12 +23,14 @@ SOFTWARE.
 */
 
 #include <maya/MFnPlugin.h>
+#include <maya/MGlobal.h>
 #include "blurRelaxNode.h"
 
 MStatus initializePlugin(MObject obj) {
 	MStatus result;
 	MFnPlugin plugin(obj, "Blur Studio", "1.0", "Any");
 	result = plugin.registerNode(DEFORMER_NAME, BlurRelax::id, BlurRelax::creator, BlurRelax::initialize, MPxNode::kDeformerNode);
+	MGlobal::executeCommand("makePaintable -attrType \"multiFloat\" -sm \"deformer\" \"" DEFORMER_NAME "\" \"weights\";");
 
 	return result;
 }

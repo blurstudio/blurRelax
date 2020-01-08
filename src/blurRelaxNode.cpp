@@ -254,9 +254,6 @@ MStatus BlurRelax::initialize() {
 	status = attributeAffects(aDeltaBase, outputGeom);
 	CHECKSTAT("aDeltaBase");
 
-
-	MGlobal::executeCommand("makePaintable -attrType \"multiFloat\" -sm \"deformer\" \"" DEFORMER_NAME "\" \"weights\";");
-
 	return MStatus::kSuccess;
 }
 
