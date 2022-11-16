@@ -66,17 +66,14 @@ jobs:
       - name: Repath Artifacts
         run: |
           mkdir artifacts/plug-ins
-          mkdir artifacts/pyModules
-          Copy-Item "./build/src/maya/${{env.BUILD_TYPE}}/simplex_maya.mll" -Destination "artifacts/plug-ins"
-          Copy-Item "./build/src/python/${{env.BUILD_TYPE}}/py*simplex.pyd" -Destination "artifacts/pyModules"
+          Copy-Item "./build/src/maya/${{env.BUILD_TYPE}}/BlurRelax.mll" -Destination "artifacts/plug-ins"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v3
         with:
           name: windows-${{matrix.maya}}
           path: |
-            artifacts/plug-ins/simplex_maya.mll
-            artifacts/pyModules/py*simplex.pyd
+            artifacts/plug-ins/BlurRelax.mll
 
   maya-macos:
     runs-on: macos-10.15
@@ -122,17 +119,14 @@ jobs:
       - name: Repath Artifacts
         run: |
           mkdir -p artifacts/plug-ins
-          mkdir -p artifacts/pyModules
-          cp ./build/src/maya/${{env.BUILD_TYPE}}/simplex_maya.bundle artifacts/plug-ins
-          cp ./build/src/python/${{env.BUILD_TYPE}}/py*simplex.so artifacts/pyModules
+          cp ./build/src/maya/${{env.BUILD_TYPE}}/BlurRelax.bundle artifacts/plug-ins
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v3
         with:
           name: mac-${{matrix.maya}}
           path: |
-            artifacts/plug-ins/simplex_maya.bundle
-            artifacts/pyModules/py*simplex.so
+            artifacts/plug-ins/BlurRelax.bundle
 
   maya-linux:
     runs-on: ubuntu-latest
@@ -143,11 +137,10 @@ jobs:
 
       matrix:
        include:
-          # The 2018 and 2019 containers use cmake 3.9, and I'm using functions introduced in 3.16
-          #- maya: "2018.7"
-          #  year: "2018"
-          #- maya: "2019.3"
-          #  year: "2019"
+          - maya: "2018.7"
+            year: "2018"
+          - maya: "2019.3"
+            year: "2019"
           - maya: "2020.4"
             year: "2020"
           - maya: "2022.3"
@@ -173,17 +166,14 @@ jobs:
       - name: Repath Artifacts
         run: |
           mkdir -p artifacts/plug-ins
-          mkdir -p artifacts/pyModules
-          cp ./build/src/maya/simplex_maya.so artifacts/plug-ins
-          cp ./build/src/python/py*simplex.so artifacts/pyModules
+          cp ./build/src/maya/BlurRelax.so artifacts/plug-ins
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v3
         with:
           name: linux-${{matrix.year}}
           path: |
-            artifacts/plug-ins/simplex_maya.so
-            artifacts/pyModules/py*simplex.so
+            artifacts/plug-ins/BlurRelax.so
 
 #
 # Shipping
@@ -214,28 +204,24 @@ jobs:
         # Omitting name: means "download all artifacts"
         # Destination directory structure:
         # ~/modules
-        #   /simplex
+        #   /BlurRelax
         #    /<os_name>-<maya_major_version>
         #     /plug-ins
-        #       simplex_maya.mll
-        #     /py2Modules
-        #       py2simplex.pyd
-        #     /py3Modules
-        #       py3simplex.pyd
-        #   /simplex.mod
+        #       BlurRelax.mll
+        #   /BlurRelax.mod
 
         with:
-          path: modules/simplex
+          path: modules/BlurRelax
 
       - name: Set env
         run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
 
       - name: Create distribution
         run: |
-          cp ./simplex.mod modules/
-          mkdir -p modules/simplex/scripts
-          cp -r ./scripts/simplexui modules/simplex/scripts
-          zip -r simplex-${{env.RELEASE_VERSION}}.zip modules/
+          cp ./BlurRelax.mod modules/
+          mkdir -p modules/BlurRelax/scripts
+          #cp -r ./scripts modules/BlurRelax/scripts
+          zip -r BlurRelax-${{env.RELEASE_VERSION}}.zip modules/
 
       - name: Upload distribution
         uses: "marvinpinto/action-automatic-releases@latest"
@@ -244,4 +230,4 @@ jobs:
           automatic_release_tag: "latest"
           prerelease: false
           files: |
-            simplex-*.zip
+            BlurRelax-*.zip

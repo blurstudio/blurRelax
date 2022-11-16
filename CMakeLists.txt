@@ -1,28 +1,36 @@
-cmake_minimum_required(VERSION 2.6)
+cmake_minimum_required(VERSION 3.9)
 
-set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/modules)
+project(
+    "BlurRelax"
+    VERSION 1.0
+    DESCRIPTION "A quick smooth with border conditions"
+    LANGUAGES CXX
+)
 
-project(BlurRelax)
-set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
-find_package(Maya REQUIRED)
-find_package(OpenGL REQUIRED)
-set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_BINARY_DIR}/../output/Maya${MAYA_VERSION})
+set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+set(CMAKE_CXX_STANDARD 14)
 
-set(SOURCE_FILES
-    "src/blurRelaxNode.cpp"
+# (defined in FindMaya.cmake, copied here for reference)
+# set(MAYA_INSTALL_BASE_PATH "" CACHE STRING
+#     "Root path containing your maya installations, e.g. /usr/autodesk or /Applications/Autodesk/"
+# )
+set(MAYA_VERSION 2020 CACHE STRING "Maya version")
+
+set(MAYA_FILES
     "src/blurRelaxNode.h"
-    "src/fastRelax.cpp"
-    "src/fastRelax.h"
-    "src/fastMayaRelax.cpp"
     "src/fastMayaRelax.h"
+    "src/fastRelax.h"
+    "src/blurRelaxNode.cpp"
+    "src/fastMayaRelax.cpp"
+    "src/fastRelax.cpp"
     "src/pluginRegister.cpp"
 )
 
-include_directories(${MAYA_INCLUDE_DIR})
-link_directories(${MAYA_LIBRARY_DIR})
-add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
-target_link_libraries(${PROJECT_NAME} ${MAYA_LIBRARIES} ${OPENGL_LIBRARY})
-
+find_package(Maya REQUIRED)
+add_library(${PROJECT_NAME} SHARED ${MAYA_FILES})
+target_link_libraries(${PROJECT_NAME} PRIVATE Maya::Maya)
+target_include_directories(${PROJECT_NAME} 
+    PRIVATE Maya::Maya
+    PUBLIC "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}"
+)
 MAYA_PLUGIN(${PROJECT_NAME})
-install(TARGETS ${PROJECT_NAME} ${MAYA_TARGET_TYPE} DESTINATION plug-ins)
-
