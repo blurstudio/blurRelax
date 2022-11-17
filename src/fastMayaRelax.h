@@ -33,7 +33,7 @@ public:
 	) : Relaxer(borderBehavior, hardEdgeBehavior, groupEdgeBehavior, rawNeighbors, rawHardEdges, rawVertData)
 	{ }
 		
-	pointArray_t MayaRelaxer::quickRelax(
+	pointArray_t quickRelax(
 		MObject &mesh,
 		const bool slide,
 		const bool doReproject,
@@ -53,7 +53,7 @@ public:
 
 
 	MMatrix getMatrixAtPoint(MObject &mesh, MFnMesh &meshFn, MItMeshVertex &vertIt) const;
-	std::vector<MMatrix> MayaRelaxer::getVertMatrices(MObject &mesh, MFnMesh &meshFn) const;
+	std::vector<MMatrix> getVertMatrices(MObject &mesh, MFnMesh &meshFn) const;
 
 };
 

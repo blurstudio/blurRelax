@@ -1,3 +1,4 @@
+#include <cstring>
 #include <maya/MFnMeshData.h>
 #include <maya/MItMeshEdge.h>
 #include <maya/MItMeshVertex.h>
@@ -232,7 +233,7 @@ pointArray_t MayaRelaxer::quickRelax(
 	FLOAT(*baseVerts)[NUM_COMPS];
 	if (slide) {
 		baseVerts = new FLOAT[numVertices][NUM_COMPS];
-		memcpy(&(baseVerts[0][0]), &(verts[0][0]), NUM_COMPS * numVertices * sizeof(FLOAT));
+		std::memcpy(&(baseVerts[0][0]), &(verts[0][0]), NUM_COMPS * numVertices * sizeof(FLOAT));
 	}
 
 	// Reserve some memory for the next-to-last iteration so we can blend
@@ -264,7 +265,7 @@ pointArray_t MayaRelaxer::quickRelax(
 	for (size_t r = 0; r < iterI; ++r) {
 		// Store the next-to-last iteration to interpolate with
 		if ((r == iterI - 1) && (iterT > 0.0))
-			memcpy(&(prevVerts[0][0]), &(verts[0][0]), NUM_COMPS * numVertices * sizeof(FLOAT));
+			std::memcpy(&(prevVerts[0][0]), &(verts[0][0]), NUM_COMPS * numVertices * sizeof(FLOAT));
 
 		quickLaplacianSmooth(verts);
 		if (taubinBias < 1.0)

@@ -66,7 +66,7 @@ jobs:
       - name: Repath Artifacts
         run: |
           mkdir artifacts/plug-ins
-          Copy-Item "./build/src/maya/${{env.BUILD_TYPE}}/BlurRelax.mll" -Destination "artifacts/plug-ins"
+          Copy-Item "./build/${{env.BUILD_TYPE}}/BlurRelax.mll" -Destination "artifacts/plug-ins"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v3
@@ -119,7 +119,7 @@ jobs:
       - name: Repath Artifacts
         run: |
           mkdir -p artifacts/plug-ins
-          cp ./build/src/maya/${{env.BUILD_TYPE}}/BlurRelax.bundle artifacts/plug-ins
+          cp ./build/${{env.BUILD_TYPE}}/BlurRelax.bundle artifacts/plug-ins
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v3
@@ -166,7 +166,7 @@ jobs:
       - name: Repath Artifacts
         run: |
           mkdir -p artifacts/plug-ins
-          cp ./build/src/maya/BlurRelax.so artifacts/plug-ins
+          cp ./build/BlurRelax.so artifacts/plug-ins
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v3
@@ -220,7 +220,7 @@ jobs:
         run: |
           cp ./BlurRelax.mod modules/
           mkdir -p modules/BlurRelax/scripts
-          #cp -r ./scripts modules/BlurRelax/scripts
+          cp -r ./scripts modules/BlurRelax
           zip -r BlurRelax-${{env.RELEASE_VERSION}}.zip modules/
 
       - name: Upload distribution
