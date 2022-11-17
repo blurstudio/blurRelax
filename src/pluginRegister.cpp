@@ -30,8 +30,11 @@ MStatus initializePlugin(MObject obj) {
 	MStatus result;
 	MFnPlugin plugin(obj, "Blur Studio", "1.0", "Any");
 	result = plugin.registerNode(DEFORMER_NAME, BlurRelax::id, BlurRelax::creator, BlurRelax::initialize, MPxNode::kDeformerNode);
-	MGlobal::executeCommand("makePaintable -attrType \"multiFloat\" -sm \"deformer\" \"" DEFORMER_NAME "\" \"weights\";");
-
+	if (MGlobal::mayaState() == MGlobal::kInteractive) {
+		MGlobal::executeCommand("makePaintable -attrType \"multiFloat\" -sm \"deformer\" \"" DEFORMER_NAME "\" \"weights\";");
+		MGlobal::executePythonCommandOnIdle("import BlurRelax.menu");
+		MGlobal::executePythonCommandOnIdle("BlurRelax.menu.create_menuitems()");
+	}
 	return result;
 }
 
@@ -41,4 +44,3 @@ MStatus uninitializePlugin(MObject obj) {
 	result = plugin.deregisterNode(BlurRelax::id);
 	return result;
 }
-

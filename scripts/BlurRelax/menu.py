@@ -162,6 +162,7 @@ def get_create_command_kwargs():
     return kwargs
 
 
+
 def display_blur_relax_options(*args, **kwargs):
     cmds.loadPlugin('BlurRelax', qt=True)
     layout = mel.eval('getOptionBox')
@@ -174,6 +175,9 @@ def display_blur_relax_options(*args, **kwargs):
             cmds.deleteUI(widget, control=True)
         except RuntimeError:
             pass
+
+    if not cmds.optionVar(exists=BORDER_DDL):
+        init_option_vars()
 
     pinBehaviors = ["None", "Pin", "Slide"]
 
@@ -309,6 +313,19 @@ def reset_to_defaults(*args, **kwargs):
     cmds.floatSliderGrp(PRESERVE_VOL_SLD, edit=True, value=0.0)
     cmds.floatSliderGrp(ITERATIONS_SLD, edit=True, value=10.0)
     cmds.floatSliderGrp(DELTA_SLD, edit=True, value=1.0)
+
+
+def init_option_vars():
+    """Initialize the option vars the first time the ui is run"""
+    cmds.optionVar(intValue=(BORDER_DDL, 1))
+    cmds.optionVar(intValue=(HARD_DDL, 0))
+    cmds.optionVar(intValue=(GROUP_DDL, 0))
+    cmds.optionVar(intValue=(REPROJ_CHK, 0))
+    cmds.optionVar(intValue=(DELTA_CHK, 0))
+    cmds.optionVar(floatValue=(REPROJ_SLD, 1.0))
+    cmds.optionVar(floatValue=(PRESERVE_VOL_SLD, 0.0))
+    cmds.optionVar(floatValue=(ITERATIONS_SLD, 10.0))
+    cmds.optionVar(floatValue=(DELTA_SLD, 1.0))
 
 
 def get_wrap_node_from_object(obj):
