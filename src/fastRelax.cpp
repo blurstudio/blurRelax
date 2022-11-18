@@ -22,6 +22,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
+#include <cstring>
+#include <cmath>
 #include <vector>
 #include <algorithm>
 #include <numeric>
@@ -74,7 +76,7 @@ void Relaxer::edgeProject(
 			// normalized(prevPoints[n] - basePos)
 			for (size_t x = 0; x < 3; ++x)
 				edge[x] = basePoints[n][x] - basePos[x];
-			FLOAT elen = sqrt(edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2]);
+			FLOAT elen = std::sqrt(edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2]);
 			for (size_t x = 0; x < 3; ++x)
 				edge[x] /= elen;
 
@@ -156,7 +158,7 @@ void Relaxer::quickLaplacianSmooth(
 		outComp[i] = shiftVal[i] * taubinBias * ((outComp[i] / valence[i]) - verts[i]) + verts[i];
 	}
 
-	memcpy(verts, outComp, nzc*sizeof(FLOAT));
+	std::memcpy(verts, outComp, nzc*sizeof(FLOAT));
 	delete outComp;
 }
 

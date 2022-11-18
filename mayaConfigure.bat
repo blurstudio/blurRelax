@@ -1,8 +1,8 @@
 setlocal
 
 SET BUILD=mayabuild
-SET MAYA_VERSION=2018
-SET COMPILER=Visual Studio 15 2017 Win64
+SET MAYA_VERSION=2020
+SET COMPILER=Visual Studio 16 2019
 
 SET PFX=%~dp0
 cd %PFX%
@@ -14,6 +14,6 @@ cmake ^
     -DMAYA_VERSION=%MAYA_VERSION% ^
     -G "%COMPILER%" ..\
 
-REM cmake --build . --config Release --target INSTALL
+cmake --build . --config Release
 
 pause
