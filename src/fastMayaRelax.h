@@ -42,11 +42,23 @@ public:
 		const FLOAT iterations
 	);
 
+	// Relax an arbitrary set of per-vertex values using this relaxer's topology.
+	// The mesh is only used if doReproject is true
+	pointArray_t quickRelax(
+		const pointArray_t &points,
+		MObject &mesh,
+		const bool slide,
+		const bool doReproject,
+		const UINT reprojectDivisons,
+		const float taubinBias,
+		const FLOAT iterations
+	);
+
 	void buildOctree(MObject &mesh, bool slide, UINT divisions);
 	void reprojectVerts(FLOAT(*verts)[NUM_COMPS], MMeshIntersector &octree) const;
 
 	void reorderVerts(MObject &mesh, MFnMesh &meshFn, FLOAT(*reoVerts)[NUM_COMPS]) const;
-	void reorderVerts(pointArray_t mpa, FLOAT(*reoVerts)[NUM_COMPS]) const;
+	void reorderVerts(const pointArray_t &mpa, FLOAT(*reoVerts)[NUM_COMPS]) const;
 
 	void revertVerts(FLOAT(*reoVerts)[NUM_COMPS], FLOAT(*reverted)[NUM_COMPS]) const;
 	pointArray_t revertVerts(FLOAT(*reoVerts)[NUM_COMPS]) const;

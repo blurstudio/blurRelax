@@ -149,7 +149,7 @@ MMatrix MayaRelaxer::getMatrixAtPoint(MObject &mesh, MFnMesh &meshFn, MItMeshVer
 	return mat;
 }
 
-void MayaRelaxer::reorderVerts(pointArray_t mpa, FLOAT(*reoVerts)[NUM_COMPS])const{
+void MayaRelaxer::reorderVerts(const pointArray_t &mpa, FLOAT(*reoVerts)[NUM_COMPS])const{
 	// Build the raw float data buffers
 	for (size_t i = 0; i < numVertices; ++i) {
 		for (size_t j = 0; j < NUM_COMPS; ++j) {
@@ -217,6 +217,21 @@ pointArray_t MayaRelaxer::quickRelax(
 	const float taubinBias,
 	const FLOAT iterations
 ) {
+	MFnMesh meshFn(mesh);
+	pointArray_t mpa;
+	meshFn.getPoints(mpa);
+	return quickRelax(mpa, mesh, slide, doReproject, reprojectDivisons, taubinBias, iterations);
+}
+
+pointArray_t MayaRelaxer::quickRelax(
+	const pointArray_t &points,
+	MObject &mesh,
+	const bool slide,
+	const bool doReproject,
+	const UINT reprojectDivisons,
+	const float taubinBias,
+	const FLOAT iterations
+) {
 
 	// Split the float iterations into an int and float
 	FLOAT iterT, iterFI;
@@ -224,10 +239,9 @@ pointArray_t MayaRelaxer::quickRelax(
 	UINT iterI = (UINT)iterFI;
 	if (iterT > 0.0) { iterI += 1; }
 
-	// Get the mesh verts
-	MFnMesh meshFn(mesh);
+	// Get the input verts
 	FLOAT(*verts)[NUM_COMPS] = new FLOAT[numVertices][NUM_COMPS];
-	reorderVerts(mesh, meshFn, verts);
+	reorderVerts(points, verts);
 
 	// make a copy of the original verts only if they'll be used for edge reprojection
 	FLOAT(*baseVerts)[NUM_COMPS];

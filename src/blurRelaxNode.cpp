@@ -73,6 +73,8 @@ MObject BlurRelax::aRecomputeTopo;
 MObject BlurRelax::aDeltaMush;
 MObject BlurRelax::aDeltaMult;
 MObject BlurRelax::aDeltaBase;
+MObject BlurRelax::aReferenceMush;
+MObject BlurRelax::aReferenceMesh;
 
 
 BlurRelax::BlurRelax() {}
@@ -254,6 +256,23 @@ MStatus BlurRelax::initialize() {
 	status = attributeAffects(aDeltaBase, outputGeom);
 	CHECKSTAT("aDeltaBase");
 
+	aReferenceMush = nAttr.create("referenceMush", "rfm", MFnNumericData::kBoolean, false, &status);
+	CHECKSTAT("aReferenceMush");
+	nAttr.setKeyable(false);
+	nAttr.setChannelBox(true);
+	status = addAttribute(aReferenceMush);
+	CHECKSTAT("aReferenceMush");
+	status = attributeAffects(aReferenceMush, outputGeom);
+	CHECKSTAT("aReferenceMush");
+
+	aReferenceMesh = tAttr.create("referenceMesh", "rfg", MFnData::kMesh);
+	tAttr.setArray(true);
+	CHECKSTAT("aReferenceMesh");
+	status = addAttribute(aReferenceMesh);
+	CHECKSTAT("aReferenceMesh");
+	status = attributeAffects(aReferenceMesh, outputGeom);
+	CHECKSTAT("aReferenceMesh");
+
 	return MStatus::kSuccess;
 }
 
@@ -290,6 +309,11 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		bool doDelta = hDoDelta.asBool();
 		MDataHandle hDeltaMult = dataBlock.inputValue(aDeltaMult);
 		float deltaMult = hDeltaMult.asFloat();
+
+		MDataHandle hDoReference = dataBlock.inputValue(aReferenceMush);
+		bool doReference = hDoReference.asBool();
+		// Reference mush is its own mode, and takes precedence over delta mush
+		if (doReference) doDelta = false;
 
 		// volume preservation uses 2 steps per iteration
 		// so half the number of iterations if I'm volume preserving
@@ -389,6 +413,57 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		// Get the painted weight values
 		std::vector<float> weightVals;
 		status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
+
+		if (doReference) {
+			// Reference mush: Take the per-vertex difference between the current points
+			// and the reference mesh, mush that difference, then add it back onto the reference
+			MPlug pRefMesh(thisMObject(), aReferenceMesh);
+			status = pRefMesh.selectAncestorLogicalIndex(multiIndex, aReferenceMesh);
+			CHECKSTAT("referenceMesh Select")
+			MDataHandle hRefMesh = dataBlock.inputValue(pRefMesh, &status);
+			if (!status) {
+				MGlobal::displayError("Invalid reference mesh");
+				return status;
+			}
+			MObject refMesh = hRefMesh.asMesh();
+			if (refMesh.isNull()) {
+				MGlobal::displayError("Null reference mesh");
+				return MStatus::kFailure;
+			}
+			MFnMesh refFn(refMesh);
+			if (refFn.numVertices() != (int)tNumVerts) {
+				MGlobal::displayError("Reference mesh vertex count does not match the deformed mesh");
+				return MStatus::kFailure;
+			}
+
+			pointArray_t refPts, curPts;
+			refFn.getPoints(refPts);
+			meshFn.getPoints(curPts);
+
+			// Store the differences as points (w=1) so the relaxer can treat them like positions
+			pointArray_t diffs(tNumVerts);
+			for (UINT i = 0; i < tNumVerts; ++i) {
+				diffs[i] = point_t(
+					curPts[i].x - refPts[i].x,
+					curPts[i].y - refPts[i].y,
+					curPts[i].z - refPts[i].z
+				);
+			}
+
+			// Edge sliding and reprojection are positional operations that don't make sense
+			// on a field of differences. Slide vertices still only average along their
+			// hard/border neighbors, so the diffs get smoothed along those edges
+			pointArray_t smoothDiffs = relaxer->quickRelax(diffs, mesh, false, false, 0, tBias, iterations);
+
+			for (; !vertIter.isDone(); vertIter.next()) {
+				int idx = vertIter.index();
+				const point_t &sd = smoothDiffs[idx];
+				const point_t &rp = refPts[idx];
+				MPoint mushed(rp.x + sd.x, rp.y + sd.y, rp.z + sd.z);
+				vertIter.setPosition(weightVals[idx] * mushed + (1.0 - weightVals[idx]) * vertIter.position());
+			}
+			return status;
+		}
 
 		// Get the smoothed point positions
 		pointArray_t mpa = relaxer->quickRelax(mesh, slide, reproject, reproDivs, tBias, iterations);
