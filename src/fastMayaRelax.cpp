@@ -185,7 +185,7 @@ void MayaRelaxer::buildOctree(MObject &mesh, bool slide, UINT divisions){
 
 void MayaRelaxer::reprojectVerts(FLOAT(*verts)[NUM_COMPS], MMeshIntersector &octree) const{
 	if (!octree.isCreated()) return;
-	UINT nzv = (UINT)neighbors[0].size();
+	UINT nzv = numUnpinned;
     #pragma omp parallel for if(numVertices>2000)
 	for (UINT i = 0; i < nzv; ++i) {
 		if ((creaseCount[i] == 0) && (vertData[i] & (UCHAR)V::IN_GROUP)) {

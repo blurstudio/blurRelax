@@ -42,29 +42,15 @@ void Relaxer::edgeProject(
 	const FLOAT basePoints[][NUM_COMPS],
 	FLOAT smoothPoints[][NUM_COMPS]
 ) const {
-	std::vector<size_t> neigh;
-	for (size_t gidx = 0; gidx < groupIdxs.size(); ++gidx) {
-		// If we have "hard edges" we have already removed
-		// any soft edges, so if the crease count for this vertex is zero
-		// we can just completely skip it. And if it's >0, then we can
-		// assume that all stored neighbors are hard.
-		// groupIdxs already stores indices in the reordered space
-		size_t idx = groupIdxs[gidx];
-
+	// creaseIdxs holds only the verts with exactly 2 sliding edges.
+	// Those verts have had all their non-sliding neighbors removed, so every
+	// stored neighbor is along a hard edge.
+	// TODO: Find the hard edge strings and reproject onto those
+	for (size_t idx : creaseIdxs) {
 		FLOAT *avg = smoothPoints[idx];
 		const FLOAT *basePos = basePoints[idx];
-		if (creaseCount[idx] != 2) { continue; }
 		FLOAT keep[3], delta[3], edge[3];
 
-		neigh.clear();
-		for (size_t i = 0; i < neighbors.size(); ++i) {
-			if (idx < neighbors[i].size()) {
-				neigh.push_back(neighbors[i][idx]);
-			}
-			else break;
-		}
-
-		// TODO: Find the hard edge strings and reproject onto those
 		FLOAT minLen = std::numeric_limits<FLOAT>::max();
 		bool found = false;
 
@@ -72,33 +58,30 @@ void Relaxer::edgeProject(
 		for (size_t x = 0; x < 3; ++x)
 			delta[x] = avg[x] - basePos[x];
 
-		for (size_t i = 0; i < neigh.size(); ++i) {
-			size_t n = neigh[i];
+		for (UINT k = neighborOffsets[idx]; k < neighborOffsets[idx + 1]; ++k) {
+			const FLOAT *nPos = basePoints[neighborFlat[k]];
 
-			// normalized(prevPoints[n] - basePos)
+			// normalized(basePoints[n] - basePos)
 			for (size_t x = 0; x < 3; ++x)
-				edge[x] = basePoints[n][x] - basePos[x];
-			FLOAT elen = std::sqrt(edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2]);
-			if (elen <= 0.0) continue; // degenerate edge
-			for (size_t x = 0; x < 3; ++x)
-				edge[x] /= elen;
+				edge[x] = nPos[x] - basePos[x];
+			FLOAT elen2 = edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2];
+			if (elen2 <= 0.0) continue; // degenerate edge
 
-			// dot(delta, edge)
-			FLOAT dd = delta[0] * edge[0] + delta[1] * edge[1] + delta[2] * edge[2];
+			// dot(delta, edge) / |edge|^2  is the projection length along the unnormalized edge
+			FLOAT dd = (delta[0] * edge[0] + delta[1] * edge[1] + delta[2] * edge[2]) / elen2;
 
-			FLOAT dn[3] = { 0.0f, 0.0f, 0.0f };
+			FLOAT dn[3] = { 0.0, 0.0, 0.0 };
 			if (dd > 0.0) {
 				for (size_t x = 0; x < 3; ++x)
 					dn[x] = edge[x] * dd;
 			}
-			FLOAT xx[3];
 
-			// delta - dn
-			for (size_t x = 0; x < 3; ++x)
-				xx[x] = delta[x] - dn[x];
-
-			// dot(xx, xx)
-			FLOAT len2 = xx[0] * xx[0] + xx[1] * xx[1] + xx[2] * xx[2];
+			// |delta - dn|^2
+			FLOAT len2 = 0.0;
+			for (size_t x = 0; x < 3; ++x) {
+				FLOAT xx = delta[x] - dn[x];
+				len2 += xx * xx;
+			}
 
 			if (len2 < minLen) {
 				minLen = len2;
@@ -112,57 +95,52 @@ void Relaxer::edgeProject(
 			for (size_t x = 0; x < 3; ++x)
 				avg[x] = basePos[x] + keep[x];
 		}
-
 	}
 }
 
 
 /*
-	All the crazy hoops I've jumped through are to make auto-vectorization work
-	in this function.
+	The verts are sorted by valence (high to low) so all the pinned verts
+	(valence 0) are at the end, and we only have to touch the first numUnpinned verts.
 
-	neighbors and neighborOffsets work together to be a kind of pseudo-transpose
-	of a std::vector of neighbors per vert with that vector sorted so the verts
-	with the most neighbors were at the top.
-	neighborOffsets contains the index offsets of vertices with at least [index] of neighbors
+	Neighbors are stored in CSR form (neighborOffsets/neighborFlat) so each vert
+	can sum its neighbors into registers and write its output exactly once.
+	The NUM_COMPS inner loops are fixed-size so they vectorize (4 doubles == one AVX register)
+
+	The update is:
+		out = shift * bias * (sum / valence - v) + v
+	which is rearranged to avoid the division:
+		out = (bias * shift / valence) * sum + (1 - bias * shift) * v
 */
-
 void Relaxer::quickLaplacianSmooth(
 	FLOAT verts2d[][NUM_COMPS],
 	const FLOAT taubinBias
 ) const {
-	// First, get verts as a single pointer to the contiguous memory stored in (verts2d*)[4]
-	FLOAT* verts = &(verts2d[0][0]);
+	const size_t nzv = numUnpinned;
+	if (nzv == 0) return;
 
-	// number of nonzero valence
-	size_t nzv = neighbors[0].size();
+	scratch.resize(NUM_COMPS * nzv);
+	FLOAT (* __restrict outComp)[NUM_COMPS] = reinterpret_cast<FLOAT(*)[NUM_COMPS]>(scratch.data());
+	const FLOAT (* __restrict verts)[NUM_COMPS] = verts2d;
+	const UINT * __restrict offsets = neighborOffsets.data();
+	const UINT * __restrict flat = neighborFlat.data();
+	const FLOAT * __restrict sov = shiftOverValence.data();
+	const FLOAT * __restrict shift = shiftVal.data();
 
-	// number of nonzero components
-	size_t nzc = NUM_COMPS * nzv;
-
-	// The __restrict keyword tells the compiler that *outComp
-	// is not pointed to by any other pointer in this scope
-	// This allows for auto-vectorization
-	FLOAT * __restrict outComp = new FLOAT[nzc];
-	memset(outComp, 0, nzc*sizeof(FLOAT));
-
-	for (size_t ncIdx = 0; ncIdx < neighbors.size(); ++ncIdx) {
-		const auto &nCol = neighbors[ncIdx];
-		size_t nColCount = nCol.size();
-		for (size_t i = 0; i < nColCount; ++i) {
-			size_t nci = NUM_COMPS * nCol[i];
-			for (size_t j = 0; j < NUM_COMPS; ++j) {
-				outComp[NUM_COMPS*i+j] = outComp[NUM_COMPS*i+j] + verts[nci+j];
-			}
+	for (size_t i = 0; i < nzv; ++i) {
+		FLOAT sum[NUM_COMPS] = {};
+		for (UINT k = offsets[i]; k < offsets[i + 1]; ++k) {
+			const FLOAT *nv = verts[flat[k]];
+			for (size_t j = 0; j < NUM_COMPS; ++j)
+				sum[j] += nv[j];
 		}
+		const FLOAT a = taubinBias * sov[i];
+		const FLOAT b = 1.0 - taubinBias * shift[i];
+		for (size_t j = 0; j < NUM_COMPS; ++j)
+			outComp[i][j] = a * sum[j] + b * verts[i][j];
 	}
 
-	for (size_t i = 0; i < nzc; ++i) {
-		outComp[i] = shiftVal[i] * taubinBias * ((outComp[i] / valence[i]) - verts[i]) + verts[i];
-	}
-
-	std::memcpy(verts, outComp, nzc*sizeof(FLOAT));
-	delete[] outComp;
+	std::memcpy(&(verts2d[0][0]), outComp, NUM_COMPS * nzv * sizeof(FLOAT));
 }
 
 
@@ -245,8 +223,8 @@ Relaxer::Relaxer(
 					}
 				}
 			}
-			rawNeighbors[i] = newNeigh;
-			rawHardEdges[i] = newHard;
+			rawNeighbors[i] = std::move(newNeigh);
+			rawHardEdges[i] = std::move(newHard);
 			rawShiftVal[i] = 0.25;
 		}
 	}
@@ -258,27 +236,41 @@ Relaxer::Relaxer(
 	vertData.resize(numVertices);
 	groupIdxs.clear();
 	groupIdxs.reserve(numVertices);
-	shiftVal.resize(numVertices * NUM_COMPS);
-	valence.resize(numVertices * NUM_COMPS);
+	creaseIdxs.clear();
+	shiftVal.resize(numVertices);
+	valence.resize(numVertices);
+	shiftOverValence.resize(numVertices);
+	neighborOffsets.clear();
+	neighborFlat.clear();
+	numUnpinned = 0;
 
 	if (numVertices == 0) return;
 
 	// Sort the verts by their valence count. Compare using > for a sort from high to low
+	// Use a stable sort so verts with the same valence keep their original relative order.
+	// Mesh vertex order usually has decent spatial locality, and keeping it
+	// makes the neighbor lookups in quickLaplacianSmooth much more cache friendly
 	// Then build the inverse sort indexes
 	std::iota(order.begin(), order.end(), 0u);
-	std::sort(order.begin(), order.end(), [&rawNeighbors](size_t a, size_t b) {return rawNeighbors[a].size() > rawNeighbors[b].size(); });
+	std::stable_sort(order.begin(), order.end(), [&rawNeighbors](size_t a, size_t b) {return rawNeighbors[a].size() > rawNeighbors[b].size(); });
 	for (size_t i = 0; i < order.size(); ++i) { invOrder[order[i]] = i; }
 
-	size_t maxValence = rawNeighbors[order[0]].size();
-	neighbors.resize(maxValence);
+	size_t totalNeighbors = 0;
+	for (const auto &neigh : rawNeighbors) totalNeighbors += neigh.size();
+	neighborFlat.reserve(totalNeighbors);
+	neighborOffsets.reserve(numVertices + 1);
+	neighborOffsets.push_back(0);
 
-	// Build the "transposed" neighbor and hard edge values
+	// Build the CSR neighbor lists
 	for (size_t i = 0; i < numVertices; ++i) {
 		const auto &neigh = rawNeighbors[order[i]];
-		const auto &hards = rawHardEdges[order[i]];
 		size_t vale = neigh.size();
-		for (size_t n = 0; n < vale; ++n) {
-			neighbors[n].push_back(invOrder[neigh[n]]);
+		if (vale > 0) {
+			numUnpinned = (UINT)(i + 1);
+			for (size_t n = 0; n < vale; ++n) {
+				neighborFlat.push_back((UINT)invOrder[neigh[n]]);
+			}
+			neighborOffsets.push_back((UINT)neighborFlat.size());
 		}
 		// only needed for slide and reproject
 		// and I only need to know if it's ==0 or ==2
@@ -287,14 +279,14 @@ Relaxer::Relaxer(
 
 		if (vertData[i] & (UCHAR)V::IN_GROUP)
 			groupIdxs.push_back((size_t)i);
+		if (creaseCount[i] == 2 && vale > 0)
+			creaseIdxs.push_back((size_t)i);
 
-		// Vectorizing flattens the vert list, so I need this data per vert, per component
-		// Maya uses xyzw points, so I need 4. In other cases I'll need 3
-		for (size_t xx = 0; xx < NUM_COMPS; ++xx) {
-			valence[NUM_COMPS * i + xx] = FLOAT(vale);
-			shiftVal[NUM_COMPS * i + xx] = rawShiftVal[order[i]];
-		}
+		valence[i] = FLOAT(vale);
+		shiftVal[i] = rawShiftVal[order[i]];
+		shiftOverValence[i] = (vale > 0) ? shiftVal[i] / valence[i] : 0.0;
 	}
 }
+
 
 

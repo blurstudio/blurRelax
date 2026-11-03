@@ -361,7 +361,7 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 		// This can happen if the user is pinning all the points
 		// or all the edges are hard (like when you import an obj)
 		if (relaxer == nullptr) return status;
-		if (relaxer->neighbors.empty()) return status;
+		if (relaxer->numUnpinned == 0) return status;
 
 		// Get the painted weight values
 		std::vector<float> weightVals;

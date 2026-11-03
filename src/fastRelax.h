@@ -41,14 +41,24 @@ public:
 	std::vector<size_t> order;
 	std::vector<size_t> invOrder;
 	std::vector<size_t> groupIdxs;
-	std::vector<std::vector<size_t>> neighbors; // A vector of neighbor indices per vertex
+	std::vector<UINT> neighborOffsets; // CSR row offsets into neighborFlat, one per unpinned vert (+1)
+	std::vector<UINT> neighborFlat; // CSR neighbor indices (reordered space), row-major per vertex
+	std::vector<size_t> creaseIdxs; // reordered indices of verts with exactly 2 sliding edges
+	std::vector<FLOAT> shiftOverValence; // shiftVal / valence, per vert
 	std::vector<std::vector<UCHAR>> hardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
 	std::vector<UCHAR> vertData; // Bitwise per-vert data: Group membership, geo boundary, group boundary,
-	std::vector<FLOAT> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
-	std::vector<FLOAT> valence; // as float for vectorizing
+	std::vector<FLOAT> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge. One per vert
+	std::vector<FLOAT> valence; // as float, one per vert
 	std::vector<UINT> creaseCount; // The number of neighboring hard edges per vert
 	UINT numVertices = 0;
-	UINT numUnpinned = 0;
+	UINT numUnpinned = 0; // number of verts with nonzero valence. These are sorted to the front
+
+private:
+	// Scratch buffer for quickLaplacianSmooth so we don't allocate every call.
+	// This means a single Relaxer must not be smoothed from multiple threads at once
+	mutable std::vector<FLOAT> scratch;
+
+public:
 
 	Relaxer(
 		short borderBehavior,
