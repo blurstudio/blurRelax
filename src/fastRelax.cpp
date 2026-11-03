@@ -27,6 +27,7 @@ SOFTWARE.
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <limits>
 #include "fastRelax.h"
 
 /*
@@ -47,7 +48,8 @@ void Relaxer::edgeProject(
 		// any soft edges, so if the crease count for this vertex is zero
 		// we can just completely skip it. And if it's >0, then we can
 		// assume that all stored neighbors are hard.
-		size_t idx = invOrder[groupIdxs[gidx]];
+		// groupIdxs already stores indices in the reordered space
+		size_t idx = groupIdxs[gidx];
 
 		FLOAT *avg = smoothPoints[idx];
 		const FLOAT *basePos = basePoints[idx];
@@ -77,6 +79,7 @@ void Relaxer::edgeProject(
 			for (size_t x = 0; x < 3; ++x)
 				edge[x] = basePoints[n][x] - basePos[x];
 			FLOAT elen = std::sqrt(edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2]);
+			if (elen <= 0.0) continue; // degenerate edge
 			for (size_t x = 0; x < 3; ++x)
 				edge[x] /= elen;
 
@@ -159,7 +162,7 @@ void Relaxer::quickLaplacianSmooth(
 	}
 
 	std::memcpy(verts, outComp, nzc*sizeof(FLOAT));
-	delete outComp;
+	delete[] outComp;
 }
 
 
@@ -188,9 +191,12 @@ Relaxer::Relaxer(
 	numVertices = (UINT)rawNeighbors.size();
 	std::vector<UCHAR> rawPinPoints;
 	std::vector<UINT> rawCreaseCount;
+	std::vector<std::vector<char>> rawSlideEdges; // per-neighbor: does this edge slide
 	rawPinPoints.resize(numVertices);
 	rawCreaseCount.resize(numVertices);
+	rawSlideEdges.resize(numVertices);
 	for (size_t start=0; start<rawNeighbors.size(); ++start){
+		rawSlideEdges[start].resize(rawNeighbors[start].size(), 0);
 		const UCHAR startData = rawVertData[start];
 		if (!(startData & (UCHAR)V::IN_GROUP)) continue; // short circuit if the start isn't in the group
 		for (size_t j=0; j<rawNeighbors[start].size(); ++j){
@@ -212,7 +218,7 @@ Relaxer::Relaxer(
 					((groupEdgeBehavior == (UCHAR)B::SLIDE) && (edgeData & (UCHAR)E::GROUP_BORDER) && !(edgeData & (UCHAR)E::MESH_BORDER));
 
 				if (pin) { rawPinPoints[start] = true; }
-				else if (slide) { ++rawCreaseCount[start]; }
+				else if (slide) { ++rawCreaseCount[start]; rawSlideEdges[start][j] = 1; }
 			}
 		}
 	}
@@ -222,7 +228,7 @@ Relaxer::Relaxer(
 	std::fill(rawShiftVal.begin(), rawShiftVal.end(), 0.5);
 
 	// Apply the "behavior transformations" to the input data
-	// if a vert has hard neighbors, remove all non-hard neighbors
+	// if a vert has sliding neighbors, remove all non-sliding neighbors
 	// if a vert is pinned remove all of its neighbors
 	for (size_t i = 0; i < rawNeighbors.size(); ++i) {
 		if ((rawCreaseCount[i] != 0) || rawPinPoints[i]) {
@@ -233,7 +239,7 @@ Relaxer::Relaxer(
 			std::vector<UCHAR> newHard;
 			if (!rawPinPoints[i]) {
 				for (size_t j = 0; j < rawNeighbors[i].size(); ++j) {
-					if (rawHardEdges[i][j] & (UCHAR)E::HARD) {
+					if (rawSlideEdges[i][j]) {
 						newNeigh.push_back(rawNeighbors[i][j]);
 						newHard.push_back(rawHardEdges[i][j]);
 					}
@@ -250,9 +256,12 @@ Relaxer::Relaxer(
 	invOrder.resize(numVertices);
 	creaseCount.resize(numVertices);
 	vertData.resize(numVertices);
-	groupIdxs.resize(numVertices);
+	groupIdxs.clear();
+	groupIdxs.reserve(numVertices);
 	shiftVal.resize(numVertices * NUM_COMPS);
 	valence.resize(numVertices * NUM_COMPS);
+
+	if (numVertices == 0) return;
 
 	// Sort the verts by their valence count. Compare using > for a sort from high to low
 	// Then build the inverse sort indexes

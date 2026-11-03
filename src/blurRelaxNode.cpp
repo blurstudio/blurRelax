@@ -107,7 +107,6 @@ MStatus BlurRelax::getTrueWeights(MObject &mesh, MDataBlock &dataBlock, UINT ind
 		MDataHandle hWeightsStructure = weightList.inputValue(&status);
 		if (!status) return status;
 		MArrayDataHandle hWeights = hWeightsStructure.child(MPxDeformerNode::weights);
-		if (!status) return status;
 
 		// number of non-zero weights
 		unsigned int numWeights = hWeights.elementCount(&status);
@@ -346,26 +345,31 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 
 		bool slide = (bb == (UCHAR)B::SLIDE) || (hb == (UCHAR)B::SLIDE) || (gb == (UCHAR)B::SLIDE);
 
-		if (recompute ||
-			(bbCheck != bb) || (hbCheck != hb) || (gbCheck != gb) ||
-			(tNumVerts != hNumVerts) || (tNumPolys != hNumPolys) || (tNumEdges != hNumEdges)
+		RelaxCache &cache = caches[multiIndex];
+		if (recompute || !cache.relaxer ||
+			(cache.bbCheck != bb) || (cache.hbCheck != hb) || (cache.gbCheck != gb) ||
+			(tNumVerts != cache.hNumVerts) || (tNumPolys != cache.hNumPolys) || (tNumEdges != cache.hNumEdges)
 		) {
-			bbCheck = bb; hbCheck = hb; gbCheck = gb;
-			hNumVerts = tNumVerts; hNumPolys = tNumPolys; hNumEdges = tNumEdges;
+			cache.bbCheck = bb; cache.hbCheck = hb; cache.gbCheck = gb;
+			cache.hNumVerts = tNumVerts; cache.hNumPolys = tNumPolys; cache.hNumEdges = tNumEdges;
 			// Populate the variables with *SPECIALLY ORDERED* data
 			// all vertex data is now shuffled by the order vector
-
-			if (relaxer != nullptr) delete relaxer;
-			relaxer = MayaRelaxer::Create(mesh, meshFn, vertIter, bb, hb, gb);
+			cache.relaxer.reset(MayaRelaxer::Create(mesh, meshFn, vertIter, bb, hb, gb));
 		}
+		MayaRelaxer *relaxer = cache.relaxer.get();
 
 		// This can happen if the user is pinning all the points
 		// or all the edges are hard (like when you import an obj)
 		if (relaxer == nullptr) return status;
 		if (relaxer->neighbors.empty()) return status;
 
+		// Get the painted weight values
+		std::vector<float> weightVals;
+		status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
+		CHECKSTAT("getTrueWeights");
 
 		// TODO!! Move these offsets (and the doDelta) into someplace more optimized
+		std::vector<MPoint> deltas;
 		if (doDelta) {
 
 			// get the input mesh corresponding to this output
@@ -380,6 +384,10 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 			MObject deltaBase = hDeltaBase.asMesh();
 			if (deltaBase.isNull()) {
 				MGlobal::displayError("Null delta base mesh");
+				return MStatus::kFailure;
+			}
+			if (MFnMesh(deltaBase).numVertices() != (int)tNumVerts) {
+				MGlobal::displayError("Delta base mesh vertex count does not match the deformed mesh");
 				return MStatus::kFailure;
 			}
 
@@ -406,13 +414,6 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 				deltas[idx] = baseVerts[idx] * mats[idx].inverse();
 			}
 		}
-		else {
-			deltas.resize(0);
-		}
-
-		// Get the painted weight values
-		std::vector<float> weightVals;
-		status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
 
 		if (doReference) {
 			// Reference mush: Take the per-vertex difference between the current points
@@ -473,6 +474,11 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 			if (deltas.size() != tNumVerts)
 				return MStatus::kFailure;
 
+			// Keep the un-smoothed positions so the weights blend against them
+			// and not against the smoothed positions we're about to write
+			pointArray_t origPts;
+			meshFn.getPoints(origPts);
+
 			for (; !vertIter.isDone(); vertIter.next()) {
 				vertIter.setPosition(mpa[vertIter.index()]);
 			}
@@ -484,7 +490,7 @@ MStatus BlurRelax::deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MM
 				int idx = vertIter.index();
 				point_t mp = (deltas[idx] * deltaMult) * mats[idx];
 				// then do the setPosition on this point
-				vertIter.setPosition((weightVals[idx]) * mp + (1.0 - weightVals[idx]) * vertIter.position());
+				vertIter.setPosition((weightVals[idx]) * mp + (1.0 - weightVals[idx]) * origPts[idx]);
 			}
 		}
 		else {

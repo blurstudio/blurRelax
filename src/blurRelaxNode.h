@@ -25,6 +25,8 @@ SOFTWARE.
 #pragma once
 #include <maya/MPxDeformerNode.h> 
 #include <vector>
+#include <map>
+#include <memory>
 #include "fastMayaRelax.h"
 
 #define DEFORMER_NAME "BlurRelax"
@@ -57,17 +59,18 @@ class BlurRelax : public MPxDeformerNode {
 		static MObject aReferenceMesh;
 		static MTypeId id;
 	private:
-		// Hash checking variables
-		int hNumVerts = 0;
-		int hNumPolys = 0;
-		int hNumEdges = 0;
-		short bbCheck = 255;
-		short hbCheck = 255;
-		short gbCheck = 255;
-
-		MPointArray deltas2;
-		std::vector<MPoint> deltas;
-		MayaRelaxer *relaxer = nullptr;
+		// A deformer can drive several meshes, so cache the relaxer per multiIndex
+		struct RelaxCache {
+			// Hash checking variables
+			UINT hNumVerts = 0;
+			UINT hNumPolys = 0;
+			UINT hNumEdges = 0;
+			short bbCheck = 255;
+			short hbCheck = 255;
+			short gbCheck = 255;
+			std::unique_ptr<MayaRelaxer> relaxer;
+		};
+		std::map<UINT, RelaxCache> caches;
 
 		MStatus getTrueWeights(
 			MObject &mesh, MDataBlock &dataBlock, UINT index,

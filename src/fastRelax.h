@@ -47,8 +47,8 @@ public:
 	std::vector<FLOAT> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge
 	std::vector<FLOAT> valence; // as float for vectorizing
 	std::vector<UINT> creaseCount; // The number of neighboring hard edges per vert
-	UINT numVertices;
-	UINT numUnpinned;
+	UINT numVertices = 0;
+	UINT numUnpinned = 0;
 
 	Relaxer(
 		short borderBehavior,
