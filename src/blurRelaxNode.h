@@ -53,6 +53,8 @@ class BlurRelax : public MPxDeformerNode {
 		static MObject aDeltaMush;
 		static MObject aDeltaMult;
 		static MObject aDeltaBase;
+		static MObject aReferenceMush;
+		static MObject aReferenceMesh;
 		static MTypeId id;
 	private:
 		// Hash checking variables
