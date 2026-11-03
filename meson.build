@@ -2,6 +2,7 @@ project('BlurRelax', 'cpp')
 
 maya_dep = dependency('maya')
 xsimd_dep = dependency('xsimd')
+openmp_dep = dependency('openmp')
 maya_name_suffix = maya_dep.get_variable('name_suffix')
 maya_version = maya_dep.get_variable('maya_version')
 
@@ -34,7 +35,7 @@ outlib = shared_library(
   install: true,
   install_dir : meson.global_source_root() / 'output_Maya' + maya_version,
   include_directories : include_directories(['src']),
-  dependencies : [maya_dep, xsimd_dep],
+  dependencies : [maya_dep, xsimd_dep, openmp_dep],
   name_prefix : '',
   name_suffix : maya_name_suffix,
 )

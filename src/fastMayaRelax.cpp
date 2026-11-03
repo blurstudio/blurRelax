@@ -7,6 +7,7 @@
 #include <maya/MItMeshPolygon.h>
 
 #include "fastMayaRelax.h"
+#include "simd.h"
 
 
 MayaRelaxer* MayaRelaxer::Create(
@@ -288,11 +289,16 @@ pointArray_t MayaRelaxer::quickRelax(
 
 	// Interpolate between prevVerts and verts based on iterT
 	if (iterT > 0.0) {
-		// This should vectorize
+		// The total length is a multiple of NUM_COMPS, and so a multiple of the batch width
+		using relax_simd::batch;
+		using relax_simd::WIDTH;
 		FLOAT * vv = &verts[0][0];
-		FLOAT * pv = &prevVerts[0][0];
-		for (size_t i = 0; i < numVertices * NUM_COMPS; ++i) {
-			vv[i] = ((vv[i] - pv[i]) * iterT) + pv[i];
+		const FLOAT * pv = &prevVerts[0][0];
+		const batch t(iterT);
+		const size_t total = size_t(numVertices) * NUM_COMPS;
+		for (size_t i = 0; i < total; i += WIDTH) {
+			const batch p = batch::load_unaligned(pv + i);
+			xsimd::fma(batch::load_unaligned(vv + i) - p, t, p).store_unaligned(vv + i);
 		}
 	}
 

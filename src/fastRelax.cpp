@@ -29,6 +29,7 @@ SOFTWARE.
 #include <numeric>
 #include <limits>
 #include "fastRelax.h"
+#include "simd.h"
 
 /*
 	This code takes the edges that have been defined as hard
@@ -105,7 +106,9 @@ void Relaxer::edgeProject(
 
 	Neighbors are stored in CSR form (neighborOffsets/neighborFlat) so each vert
 	can sum its neighbors into registers and write its output exactly once.
-	The NUM_COMPS inner loops are fixed-size so they vectorize (4 doubles == one AVX register)
+	Each vertex is loaded as xsimd batches (one AVX register for 4 doubles,
+	or two SSE2/NEON registers), so the per-component work is explicit SIMD
+	instead of relying on the auto-vectorizer.
 
 	The update is:
 		out = shift * bias * (sum / valence - v) + v
@@ -116,28 +119,40 @@ void Relaxer::quickLaplacianSmooth(
 	FLOAT verts2d[][NUM_COMPS],
 	const FLOAT taubinBias
 ) const {
+	using relax_simd::batch;
+	using relax_simd::WIDTH;
+	using relax_simd::PER_VERT;
+
 	const size_t nzv = numUnpinned;
 	if (nzv == 0) return;
 
 	scratch.resize(NUM_COMPS * nzv);
-	FLOAT (* __restrict outComp)[NUM_COMPS] = reinterpret_cast<FLOAT(*)[NUM_COMPS]>(scratch.data());
-	const FLOAT (* __restrict verts)[NUM_COMPS] = verts2d;
+	FLOAT * __restrict outComp = scratch.data();
+	const FLOAT * __restrict verts = &(verts2d[0][0]);
 	const UINT * __restrict offsets = neighborOffsets.data();
 	const UINT * __restrict flat = neighborFlat.data();
 	const FLOAT * __restrict sov = shiftOverValence.data();
 	const FLOAT * __restrict shift = shiftVal.data();
 
 	for (size_t i = 0; i < nzv; ++i) {
-		FLOAT sum[NUM_COMPS] = {};
+		batch sum[PER_VERT];
+		for (size_t p = 0; p < PER_VERT; ++p)
+			sum[p] = batch(FLOAT(0.0));
+
+		// The buffers are only guaranteed 16-byte aligned, so use unaligned loads.
+		// On anything newer than Sandy Bridge they cost the same when the data happens to be aligned
 		for (UINT k = offsets[i]; k < offsets[i + 1]; ++k) {
-			const FLOAT *nv = verts[flat[k]];
-			for (size_t j = 0; j < NUM_COMPS; ++j)
-				sum[j] += nv[j];
+			const FLOAT *nv = verts + size_t(flat[k]) * NUM_COMPS;
+			for (size_t p = 0; p < PER_VERT; ++p)
+				sum[p] += batch::load_unaligned(nv + p * WIDTH);
 		}
-		const FLOAT a = taubinBias * sov[i];
-		const FLOAT b = 1.0 - taubinBias * shift[i];
-		for (size_t j = 0; j < NUM_COMPS; ++j)
-			outComp[i][j] = a * sum[j] + b * verts[i][j];
+
+		const batch a(taubinBias * sov[i]);
+		const batch b(FLOAT(1.0) - taubinBias * shift[i]);
+		const FLOAT *vi = verts + i * NUM_COMPS;
+		FLOAT *oi = outComp + i * NUM_COMPS;
+		for (size_t p = 0; p < PER_VERT; ++p)
+			xsimd::fma(a, sum[p], b * batch::load_unaligned(vi + p * WIDTH)).store_unaligned(oi + p * WIDTH);
 	}
 
 	std::memcpy(&(verts2d[0][0]), outComp, NUM_COMPS * nzv * sizeof(FLOAT));
