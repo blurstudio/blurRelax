@@ -1,4 +1,5 @@
 #include <cstring>
+#include <cmath>
 #include <maya/MFnMeshData.h>
 #include <maya/MItMeshEdge.h>
 #include <maya/MItMeshVertex.h>
@@ -59,7 +60,7 @@ MayaRelaxer* MayaRelaxer::Create(
 			MIntArray polyVerts;
 			meshFn.getPolygonVertices(connFaces[i], polyVerts);
 			for (UINT j=0; j<polyVerts.length(); ++j){
-				if (!(rawVertData[polyVerts[i]] & (UCHAR)V::IN_GROUP)){
+				if (!(rawVertData[polyVerts[j]] & (UCHAR)V::IN_GROUP)){
 					internalEdge = false;
 					edgeData |= (UCHAR)E::GROUP_BORDER;
 					break;
@@ -82,17 +83,22 @@ std::vector<MMatrix> MayaRelaxer::getVertMatrices(MObject &mesh, MFnMesh &meshFn
 	MFloatVectorArray norms, faceTangs, tangs;
 	MFloatPointArray points;
 	meshFn.getVertexNormals(false, norms);
-	meshFn.getTangents(faceTangs);
+	stat = meshFn.getTangents(faceTangs);
 	meshFn.getPoints(points);
 
 	tangs.setLength(numVerts);
-	
+	for (UINT i = 0; i < numVerts; ++i) tangs[i] = MFloatVector::zero;
+
 	MIntArray counts, connects;
 	meshFn.getVertices(counts, connects);
 
+	// getTangents fails (and returns nothing) if the mesh has no UVs
+	// In that case leave the tangents at zero, and a fallback is built below
+	bool haveTangs = stat && (faceTangs.length() >= connects.length());
+
 	int offset = 0;
 	std::vector<char> dones(numVerts);
-	for (UINT faceIdx = 0; faceIdx < counts.length(); ++faceIdx) {
+	for (UINT faceIdx = 0; haveTangs && faceIdx < counts.length(); ++faceIdx) {
 		int count = counts[faceIdx];
 
 		for (int i = 0; i < count; ++i) {
@@ -111,7 +117,18 @@ std::vector<MMatrix> MayaRelaxer::getVertMatrices(MObject &mesh, MFnMesh &meshFn
 		MFloatVector &norm = norms[i];
 		MFloatVector &tang = tangs[i];
 
-		MFloatVector binm = (norm ^ tang).normal();
+		// If there's no usable tangent (no UVs, or tangent parallel to the normal)
+		// build one from the world axis least aligned with the normal so we don't get NaNs
+		MFloatVector binm = norm ^ tang;
+		if (binm.length() < 1.0e-6f) {
+			float ax = std::fabs(norm.x), ay = std::fabs(norm.y), az = std::fabs(norm.z);
+			MFloatVector axis;
+			if (ax <= ay && ax <= az) axis = MFloatVector(1.0f, 0.0f, 0.0f);
+			else if (ay <= az) axis = MFloatVector(0.0f, 1.0f, 0.0f);
+			else axis = MFloatVector(0.0f, 0.0f, 1.0f);
+			binm = norm ^ axis;
+		}
+		binm.normalize();
 		tang = (binm ^ norm).normal();
 
 		double mm[4][4] = {
@@ -127,27 +144,6 @@ std::vector<MMatrix> MayaRelaxer::getVertMatrices(MObject &mesh, MFnMesh &meshFn
 }
 
 
-
-MMatrix MayaRelaxer::getMatrixAtPoint(MObject &mesh, MFnMesh &meshFn, MItMeshVertex &vertIt) const {
-	MVector norm, tang, binm;
-
-	int idx = vertIt.index();
-	vertIt.getNormal(norm);
-	meshFn.getFaceVertexTangent(connFaces[idx], idx, tang);
-	binm = (norm ^ tang).normal();
-	tang = (binm ^ norm).normal();
-	MPoint vert = vertIt.position();
-
-	double mm[4][4] = {
-		{norm[0], tang[0], binm[0], 0.0},
-		{norm[1], tang[1], binm[1], 0.0},
-		{norm[2], tang[2], binm[2], 0.0},
-		{vert[0], vert[1], vert[2], 1.0}
-	};
-
-	MMatrix mat(mm);
-	return mat;
-}
 
 void MayaRelaxer::reorderVerts(const pointArray_t &mpa, FLOAT(*reoVerts)[NUM_COMPS])const{
 	// Build the raw float data buffers
@@ -192,7 +188,7 @@ void MayaRelaxer::reprojectVerts(FLOAT(*verts)[NUM_COMPS], MMeshIntersector &oct
 	UINT nzv = (UINT)neighbors[0].size();
     #pragma omp parallel for if(numVertices>2000)
 	for (UINT i = 0; i < nzv; ++i) {
-		if ((creaseCount[i] == 0) && (vertData[i] && (UCHAR)V::IN_GROUP)) {
+		if ((creaseCount[i] == 0) && (vertData[i] & (UCHAR)V::IN_GROUP)) {
 			point_t mf(verts[i][0], verts[i][1], verts[i][2]);
 			MPointOnMesh pom;
 			octree.getClosestPoint(mf, pom);

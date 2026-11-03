@@ -17,8 +17,6 @@ typedef typename std::conditional<sizeof(FLOAT) == sizeof(double), MPointArray, 
 
 class MayaRelaxer: public Relaxer {
 public:
-	std::vector<int> connFaces;
-
 	static MayaRelaxer* Create(MObject &mesh, MFnMesh &meshFn, MItGeometry& vertIter,
 		short borderBehavior, short hardEdgeBehavior, short groupEdgeBehavior
 	);
@@ -64,7 +62,6 @@ public:
 	pointArray_t revertVerts(FLOAT(*reoVerts)[NUM_COMPS]) const;
 
 
-	MMatrix getMatrixAtPoint(MObject &mesh, MFnMesh &meshFn, MItMeshVertex &vertIt) const;
 	std::vector<MMatrix> getVertMatrices(MObject &mesh, MFnMesh &meshFn) const;
 
 };
