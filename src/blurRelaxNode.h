@@ -23,57 +23,66 @@ SOFTWARE.
 */
 
 #pragma once
-#include <maya/MPxDeformerNode.h> 
-#include <vector>
+#include <maya/MPxDeformerNode.h>
+
 #include <map>
 #include <memory>
+#include <vector>
+
 #include "fastMayaRelax.h"
 
 #define DEFORMER_NAME "BlurRelax"
-#define CHECKSTAT(m) if (!status) {status.perror(m); return status;};
+#define CHECKSTAT(m)                                                                               \
+    if (!status) {                                                                                 \
+        status.perror(m);                                                                          \
+        return status;                                                                             \
+    };
 
 class BlurRelax : public MPxDeformerNode {
-	public:
-		BlurRelax();
-		~BlurRelax() override;
+  public:
+    BlurRelax();
+    ~BlurRelax() override;
 
-		static void* creator();
-		static MStatus initialize();
+    static void *creator();
+    static MStatus initialize();
 
-		MStatus deform(MDataBlock& dataBlock, MItGeometry& vertIter, const MMatrix& matrix, UINT multiIndex) override;
+    MStatus deform(
+        MDataBlock &dataBlock, MItGeometry &vertIter, const MMatrix &matrix, UINT multiIndex
+    ) override;
 
-	public:
-		// local node attributes
-		static MObject aIterations;
-		static MObject aBorderBehavior;
-		static MObject aHardEdgeBehavior;
-		static MObject aGroupEdgeBehavior;
-		static MObject aReproject;
-		static MObject aReprojectDivs;
-		static MObject aTaubinBias;
-		static MObject aRecomputeTopo;
-		static MObject aDeltaMush;
-		static MObject aDeltaMult;
-		static MObject aDeltaBase;
-		static MObject aReferenceMush;
-		static MObject aReferenceMesh;
-		static MTypeId id;
-	private:
-		// A deformer can drive several meshes, so cache the relaxer per multiIndex
-		struct RelaxCache {
-			// Hash checking variables
-			UINT hNumVerts = 0;
-			UINT hNumPolys = 0;
-			UINT hNumEdges = 0;
-			short bbCheck = 255;
-			short hbCheck = 255;
-			short gbCheck = 255;
-			std::unique_ptr<MayaRelaxer> relaxer;
-		};
-		std::map<UINT, RelaxCache> caches;
+  public:
+    // local node attributes
+    static MObject aIterations;
+    static MObject aBorderBehavior;
+    static MObject aHardEdgeBehavior;
+    static MObject aGroupEdgeBehavior;
+    static MObject aReproject;
+    static MObject aReprojectDivs;
+    static MObject aTaubinBias;
+    static MObject aRecomputeTopo;
+    static MObject aDeltaMush;
+    static MObject aDeltaMult;
+    static MObject aDeltaBase;
+    static MObject aReferenceMush;
+    static MObject aReferenceMesh;
+    static MTypeId id;
 
-		MStatus getTrueWeights(
-			MObject &mesh, MDataBlock &dataBlock, UINT index,
-			std::vector<float> &weightVals, float envelope) const;
+  private:
+    // A deformer can drive several meshes, so cache the relaxer per multiIndex
+    struct RelaxCache {
+        // Hash checking variables
+        UINT hNumVerts = 0;
+        UINT hNumPolys = 0;
+        UINT hNumEdges = 0;
+        short bbCheck = 255;
+        short hbCheck = 255;
+        short gbCheck = 255;
+        std::unique_ptr<MayaRelaxer> relaxer;
+    };
+    std::map<UINT, RelaxCache> caches;
+
+    MStatus getTrueWeights(
+        MObject &mesh, MDataBlock &dataBlock, UINT index, std::vector<float> &weightVals,
+        float envelope
+    ) const;
 };
-

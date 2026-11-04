@@ -24,24 +24,33 @@ SOFTWARE.
 
 #include <maya/MFnPlugin.h>
 #include <maya/MGlobal.h>
+
 #include "blurRelaxNode.h"
 #include "version.h"
 
-MStatus initializePlugin(MObject obj) {
-	MStatus result;
-	MFnPlugin plugin(obj, "Blur Studio", VERSION_STRING, "Any");
-	result = plugin.registerNode(DEFORMER_NAME, BlurRelax::id, BlurRelax::creator, BlurRelax::initialize, MPxNode::kDeformerNode);
-	if (MGlobal::mayaState() == MGlobal::kInteractive) {
-		MGlobal::executeCommand("makePaintable -attrType \"multiFloat\" -sm \"deformer\" \"" DEFORMER_NAME "\" \"weights\";");
-		MGlobal::executePythonCommandOnIdle("import BlurRelax.menu");
-		MGlobal::executePythonCommandOnIdle("BlurRelax.menu.create_menuitems()");
-	}
-	return result;
+MStatus initializePlugin(MObject obj)
+{
+    MStatus result;
+    MFnPlugin plugin(obj, "Blur Studio", VERSION_STRING, "Any");
+    result = plugin.registerNode(
+        DEFORMER_NAME, BlurRelax::id, BlurRelax::creator, BlurRelax::initialize,
+        MPxNode::kDeformerNode
+    );
+    if (MGlobal::mayaState() == MGlobal::kInteractive) {
+        MGlobal::executeCommand(
+            "makePaintable -attrType \"multiFloat\" -sm \"deformer\" \"" DEFORMER_NAME
+            "\" \"weights\";"
+        );
+        MGlobal::executePythonCommandOnIdle("import BlurRelax.menu");
+        MGlobal::executePythonCommandOnIdle("BlurRelax.menu.create_menuitems()");
+    }
+    return result;
 }
 
-MStatus uninitializePlugin(MObject obj) {
-	MStatus result;
-	MFnPlugin plugin(obj);
-	result = plugin.deregisterNode(BlurRelax::id);
-	return result;
+MStatus uninitializePlugin(MObject obj)
+{
+    MStatus result;
+    MFnPlugin plugin(obj);
+    result = plugin.deregisterNode(BlurRelax::id);
+    return result;
 }

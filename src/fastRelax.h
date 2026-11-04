@@ -29,54 +29,44 @@ typedef unsigned int UINT;
 typedef unsigned char UCHAR;
 constexpr auto NUM_COMPS = 4;
 
-
 enum class V : UCHAR { IN_GROUP = 1, MESH_BORDER = 2, GROUP_BORDER = 4 };
 enum class E : UCHAR { HARD = 1, MESH_BORDER = 2, GROUP_BORDER = 4 };
 enum class B : UCHAR { NONE, PIN, SLIDE };
 enum class S : UCHAR { TAUBIN, LAPLACIAN };
 
-
 class Relaxer {
-public:
-	std::vector<size_t> order;
-	std::vector<size_t> invOrder;
-	std::vector<size_t> groupIdxs;
-	std::vector<UINT> neighborOffsets; // CSR row offsets into neighborFlat, one per unpinned vert (+1)
-	std::vector<UINT> neighborFlat; // CSR neighbor indices (reordered space), row-major per vertex
-	std::vector<size_t> creaseIdxs; // reordered indices of verts with exactly 2 sliding edges
-	std::vector<FLOAT> shiftOverValence; // shiftVal / valence, per vert
-	std::vector<std::vector<UCHAR>> hardEdges; // Bitwise per-neighbor data: edge is hard, edge along boundary
-	std::vector<UCHAR> vertData; // Bitwise per-vert data: Group membership, geo boundary, group boundary,
-	std::vector<FLOAT> shiftVal; // normally 0.5; but it's 0.25 if on a hard edge. One per vert
-	std::vector<FLOAT> valence; // as float, one per vert
-	std::vector<UINT> creaseCount; // The number of neighboring hard edges per vert
-	UINT numVertices = 0;
-	UINT numUnpinned = 0; // number of verts with nonzero valence. These are sorted to the front
+  public:
+    std::vector<size_t> order;
+    std::vector<size_t> invOrder;
+    std::vector<size_t> groupIdxs;
+    std::vector<UINT> neighborOffsets; // CSR row offsets into neighborFlat, one per unpinned vert
+                                       // (+1)
+    std::vector<UINT> neighborFlat; // CSR neighbor indices (reordered space), row-major per vertex
+    std::vector<size_t> creaseIdxs; // reordered indices of verts with exactly 2 sliding edges
+    std::vector<FLOAT> shiftOverValence;       // shiftVal / valence, per vert
+    std::vector<std::vector<UCHAR>> hardEdges; // Bitwise per-neighbor data: edge is hard, edge
+                                               // along boundary
+    std::vector<UCHAR> vertData;   // Bitwise per-vert data: Group membership, geo boundary, group
+                                   // boundary,
+    std::vector<FLOAT> shiftVal;   // normally 0.5; but it's 0.25 if on a hard edge. One per vert
+    std::vector<FLOAT> valence;    // as float, one per vert
+    std::vector<UINT> creaseCount; // The number of neighboring hard edges per vert
+    UINT numVertices = 0;
+    UINT numUnpinned = 0; // number of verts with nonzero valence. These are sorted to the front
 
-private:
-	// Scratch buffer for quickLaplacianSmooth so we don't allocate every call.
-	// This means a single Relaxer must not be smoothed from multiple threads at once
-	mutable std::vector<FLOAT> scratch;
+  private:
+    // Scratch buffer for quickLaplacianSmooth so we don't allocate every call.
+    // This means a single Relaxer must not be smoothed from multiple threads at once
+    mutable std::vector<FLOAT> scratch;
 
-public:
+  public:
+    Relaxer(
+        short borderBehavior, short hardEdgeBehavior, short groupEdgeBehavior,
+        std::vector<std::vector<size_t>> rawNeighbors, std::vector<std::vector<UCHAR>> rawHardEdges,
+        const std::vector<UCHAR> &rawVertData
+    );
 
-	Relaxer(
-		short borderBehavior,
-		short hardEdgeBehavior,
-		short groupEdgeBehavior,
-		std::vector<std::vector<size_t>> rawNeighbors,
-		std::vector<std::vector<UCHAR>> rawHardEdges,
-		const std::vector<UCHAR> &rawVertData
-	);
+    void edgeProject(const FLOAT basePoints[][NUM_COMPS], FLOAT smoothPoints[][NUM_COMPS]) const;
 
-	void edgeProject(
-		const FLOAT basePoints[][NUM_COMPS],
-		FLOAT smoothPoints[][NUM_COMPS]
-	) const;
-
-	void quickLaplacianSmooth(
-		FLOAT verts2d[][NUM_COMPS],
-		const FLOAT taubinBias=1.0
-	) const;
-
+    void quickLaplacianSmooth(FLOAT verts2d[][NUM_COMPS], const FLOAT taubinBias = 1.0) const;
 };
