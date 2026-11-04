@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <type_traits>
 #include <xsimd/xsimd.hpp>
+
 #include "fastRelax.h"
 
 namespace relax_simd {
@@ -14,12 +15,9 @@ namespace relax_simd {
 // straddle two vertices
 using sized_batch = xsimd::make_sized_batch_t<FLOAT, NUM_COMPS>;
 using batch = typename std::conditional<
-	std::is_void<sized_batch>::value,
-	xsimd::batch<FLOAT>,
-	sized_batch
->::type;
+    std::is_void<sized_batch>::value, xsimd::batch<FLOAT>, sized_batch>::type;
 
-constexpr std::size_t WIDTH = batch::size; // FLOATs per batch
+constexpr std::size_t WIDTH = batch::size;          // FLOATs per batch
 constexpr std::size_t PER_VERT = NUM_COMPS / WIDTH; // batches per vertex
 
 static_assert(NUM_COMPS % WIDTH == 0, "NUM_COMPS must be a multiple of the SIMD width");
