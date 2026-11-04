@@ -4,7 +4,7 @@ So many different ways to do a mush/relax/smooth
 Slide Mode:
 One of the most annoying things with trying to even out geometry is that the relax will either pin the un-even verts on the border, or it won't pin them at all and you lose your shape.
 I added "Slide" mode for pinning that fixes this issue.
-![Pinning Demo](references/BlurRelax_PinVsSlide.gif)
+![Pinning Demo](resources/BlurRelax_PinVsSlide.gif)
 
 Volume Preservation:
 Keep some percentage of the volume when smoothing. Uses the Taubin Smoothing algorithm
