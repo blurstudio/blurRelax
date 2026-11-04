@@ -2,7 +2,9 @@ project('BlurRelax', 'cpp')
 
 maya_dep = dependency('maya')
 xsimd_dep = dependency('xsimd')
-openmp_dep = dependency('openmp')
+# Apple clang doesn't ship OpenMP. It's only used to parallelize reprojection,
+# so build without it there rather than requiring users to have libomp installed
+openmp_dep = dependency('openmp', required: false)
 maya_name_suffix = maya_dep.get_variable('name_suffix')
 maya_version = maya_dep.get_variable('maya_version')
 
