@@ -62,9 +62,10 @@ class BlurRelax : public MPxDeformerNode {
     static MObject aRecomputeTopo;
     static MObject aDeltaMush;
     static MObject aDeltaMult;
-    static MObject aDeltaBase;
     static MObject aReferenceMush;
-    static MObject aReferenceMesh;
+    // The inherited geometryFilter.originalGeometry attribute. MPxGeometryFilter only
+    // exposes it as a static member in Maya 2025+, so it's looked up by name before that
+    static MObject aOriginalGeometry;
     static MTypeId id;
 
   private:
@@ -85,4 +86,6 @@ class BlurRelax : public MPxDeformerNode {
         MObject &mesh, MDataBlock &dataBlock, UINT index, std::vector<float> &weightVals,
         float envelope
     ) const;
+
+    MStatus getBaseMesh(MDataBlock &dataBlock, UINT multiIndex, UINT numVerts, MObject &baseMesh);
 };

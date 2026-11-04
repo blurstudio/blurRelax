@@ -45,6 +45,7 @@ SOFTWARE.
 #include <maya/MMatrix.h>
 #include <maya/MMatrixArray.h>
 #include <maya/MMeshIntersector.h>
+#include <maya/MNodeClass.h>
 #include <maya/MPoint.h>
 #include <maya/MPointArray.h>
 #include <maya/MPxDeformerNode.h>
@@ -67,9 +68,8 @@ MObject BlurRelax::aTaubinBias;
 MObject BlurRelax::aRecomputeTopo;
 MObject BlurRelax::aDeltaMush;
 MObject BlurRelax::aDeltaMult;
-MObject BlurRelax::aDeltaBase;
 MObject BlurRelax::aReferenceMush;
-MObject BlurRelax::aReferenceMesh;
+MObject BlurRelax::aOriginalGeometry;
 
 BlurRelax::BlurRelax() {}
 BlurRelax::~BlurRelax() {}
@@ -140,7 +140,6 @@ MStatus BlurRelax::initialize()
     MStatus status;
     MFnEnumAttribute eAttr;
     MFnNumericAttribute nAttr;
-    MFnTypedAttribute tAttr;
 
     aBorderBehavior = eAttr.create("borderBehavior", "bb", (UCHAR)B::SLIDE, &status);
     CHECKSTAT("aBorderBehavior");
@@ -252,13 +251,15 @@ MStatus BlurRelax::initialize()
     status = attributeAffects(aDeltaMult, outputGeom);
     CHECKSTAT("aDeltaMult");
 
-    aDeltaBase = tAttr.create("deltaBase", "db", MFnData::kMesh);
-    tAttr.setArray(true);
-    CHECKSTAT("aDeltaBase");
-    status = addAttribute(aDeltaBase);
-    CHECKSTAT("aDeltaBase");
-    status = attributeAffects(aDeltaBase, outputGeom);
-    CHECKSTAT("aDeltaBase");
+    // Delta and reference mush read the rest pose from the inherited originalGeometry
+#if MAYA_API_VERSION >= 20250000
+    aOriginalGeometry = originalGeometry;
+#else
+    aOriginalGeometry = MNodeClass("geometryFilter").attribute("originalGeometry", &status);
+    CHECKSTAT("originalGeometry lookup");
+#endif
+    status = attributeAffects(aOriginalGeometry, outputGeom);
+    CHECKSTAT("originalGeometry");
 
     aReferenceMush = nAttr.create("referenceMush", "rfm", MFnNumericData::kBoolean, false, &status);
     CHECKSTAT("aReferenceMush");
@@ -269,14 +270,37 @@ MStatus BlurRelax::initialize()
     status = attributeAffects(aReferenceMush, outputGeom);
     CHECKSTAT("aReferenceMush");
 
-    aReferenceMesh = tAttr.create("referenceMesh", "rfg", MFnData::kMesh);
-    tAttr.setArray(true);
-    CHECKSTAT("aReferenceMesh");
-    status = addAttribute(aReferenceMesh);
-    CHECKSTAT("aReferenceMesh");
-    status = attributeAffects(aReferenceMesh, outputGeom);
-    CHECKSTAT("aReferenceMesh");
+    return MStatus::kSuccess;
+}
 
+MStatus
+BlurRelax::getBaseMesh(MDataBlock &dataBlock, UINT multiIndex, UINT numVerts, MObject &baseMesh)
+{
+    // Get the originalGeometry mesh corresponding to this output, and make sure it matches.
+    // Maya connects originalGeometry to the orig shape when the deformer is created normally
+    MStatus status;
+    MPlug pOrigGeo(thisMObject(), aOriginalGeometry);
+    status = pOrigGeo.selectAncestorLogicalIndex(multiIndex, aOriginalGeometry);
+    CHECKSTAT("originalGeometry Select")
+    MDataHandle hOrigGeo = dataBlock.inputValue(pOrigGeo, &status);
+    if (!status) {
+        MGlobal::displayError("Invalid originalGeometry mesh");
+        return status;
+    }
+    baseMesh = hOrigGeo.asMesh();
+    if (baseMesh.isNull()) {
+        MGlobal::displayError(
+            "No originalGeometry mesh. Connect the orig shape to originalGeometry[" +
+            MString() + multiIndex + "]"
+        );
+        return MStatus::kFailure;
+    }
+    if (MFnMesh(baseMesh).numVertices() != (int)numVerts) {
+        MGlobal::displayError(
+            "originalGeometry mesh vertex count does not match the deformed mesh"
+        );
+        return MStatus::kFailure;
+    }
     return MStatus::kSuccess;
 }
 
@@ -385,36 +409,24 @@ MStatus BlurRelax::deform(
         status = getTrueWeights(mesh, dataBlock, multiIndex, weightVals, env);
         CHECKSTAT("getTrueWeights");
 
+        // Both delta and reference mush need the rest-pose mesh from originalGeometry
+        MObject baseMesh;
+        if (doDelta || doReference) {
+            status = getBaseMesh(dataBlock, multiIndex, tNumVerts, baseMesh);
+            if (!status) {
+                return status;
+            }
+        }
+
         // TODO!! Move these offsets (and the doDelta) into someplace more optimized
         std::vector<MPoint> deltas;
         if (doDelta) {
-            // get the input mesh corresponding to this output
-            MPlug pDeltaBase(thisMObject(), aDeltaBase);
-            status = pDeltaBase.selectAncestorLogicalIndex(multiIndex, aDeltaBase);
-            CHECKSTAT("deltaBase Select")
-            MDataHandle hDeltaBase = dataBlock.inputValue(pDeltaBase, &status);
-            if (!status) {
-                MGlobal::displayError("Invalid delta base mesh");
-                return status;
-            }
-            MObject deltaBase = hDeltaBase.asMesh();
-            if (deltaBase.isNull()) {
-                MGlobal::displayError("Null delta base mesh");
-                return MStatus::kFailure;
-            }
-            if (MFnMesh(deltaBase).numVertices() != (int)tNumVerts) {
-                MGlobal::displayError(
-                    "Delta base mesh vertex count does not match the deformed mesh"
-                );
-                return MStatus::kFailure;
-            }
-
             // Create a copy of the input mesh so we can have maya do the normal/tangent/binormal
             // calculations
             MFnMeshData baseCopyParFn;
             MObject baseCopyPar = baseCopyParFn.create();
             MFnMesh baseCopyFn;
-            MObject baseCopy = baseCopyFn.copy(deltaBase, baseCopyPar);
+            MObject baseCopy = baseCopyFn.copy(baseMesh, baseCopyPar);
 
             // get a base and smoothed copy of the original verts
             pointArray_t baseVerts, smoothedBaseVerts;
@@ -437,27 +449,8 @@ MStatus BlurRelax::deform(
 
         if (doReference) {
             // Reference mush: Take the per-vertex difference between the current points
-            // and the reference mesh, mush that difference, then add it back onto the reference
-            MPlug pRefMesh(thisMObject(), aReferenceMesh);
-            status = pRefMesh.selectAncestorLogicalIndex(multiIndex, aReferenceMesh);
-            CHECKSTAT("referenceMesh Select")
-            MDataHandle hRefMesh = dataBlock.inputValue(pRefMesh, &status);
-            if (!status) {
-                MGlobal::displayError("Invalid reference mesh");
-                return status;
-            }
-            MObject refMesh = hRefMesh.asMesh();
-            if (refMesh.isNull()) {
-                MGlobal::displayError("Null reference mesh");
-                return MStatus::kFailure;
-            }
-            MFnMesh refFn(refMesh);
-            if (refFn.numVertices() != (int)tNumVerts) {
-                MGlobal::displayError("Reference mesh vertex count does not match the deformed mesh"
-                );
-                return MStatus::kFailure;
-            }
-
+            // and the original mesh, mush that difference, then add it back onto the original
+            MFnMesh refFn(baseMesh);
             pointArray_t refPts, curPts;
             refFn.getPoints(refPts);
             meshFn.getPoints(curPts);
