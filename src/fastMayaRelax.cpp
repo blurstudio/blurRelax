@@ -188,7 +188,7 @@ void MayaRelaxer::reprojectVerts(FLOAT(*verts)[NUM_COMPS], MMeshIntersector &oct
 	if (!octree.isCreated()) return;
 	UINT nzv = numUnpinned;
     #pragma omp parallel for if(numVertices>2000)
-	for (UINT i = 0; i < nzv; ++i) {
+	for (int i = 0; i < nzv; ++i) {
 		if ((creaseCount[i] == 0) && (vertData[i] & (UCHAR)V::IN_GROUP)) {
 			point_t mf(verts[i][0], verts[i][1], verts[i][2]);
 			MPointOnMesh pom;
