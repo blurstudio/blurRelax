@@ -1,11 +1,26 @@
 # BlurRelax
-Why does maya not have a smooth or relax deformer?  They've got brushes, sure, but no deformers.
-This one is pretty fast. I've got it working with SIMD under the hood.
+So many different ways to do a mush/relax/smooth
 
-Also includes pinning and sliding along hard edges/borders.
+Slide Mode:
 One of the most annoying things with trying to even out geometry is that the relax will either pin the un-even verts on the border, or it won't pin them at all and you lose your shape.
 I added "Slide" mode for pinning that fixes this issue.
+![Pinning Demo](references/BlurRelax_PinVsSlide.gif)
 
-![Pinning Demo](https://tbttfox.github.io/Images/BlurRelax_PinVsSlide.gif)
+Volume Preservation:
+Keep some percentage of the volume when smoothing. Uses the Taubin Smoothing algorithm
 
-In future versions, I plan to add user defined pin sets.
+Reprojection:
+After every iteration, snap the vertices back to the closest point on the original mesh (or a *subdivided* version of the original mesh).
+This is more expensive than volume preservation, but more accurate. However, tight creases can cause chatter
+
+Delta Mush:
+It's delta mush
+
+Reference Mush:
+Only smooth out the difference between the input and the originalGeometry
+
+Interpolation of iterations:
+Iterations are linearly interpolated. So an iteration of 1.5 is a blend of 1 and 2 iterations.
+
+
+
